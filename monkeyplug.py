@@ -367,7 +367,7 @@ def main():
     elif args.input and os.path.isfile(args.input):
         outFile = os.path.splitext(args.input)[0] + "_clean." + args.outputExt
     elif args.input and args.input.lower().startswith("http"):
-        outFile = os.path.basename(urlparse(args.input).path)
+        outFile = os.path.splitext(os.path.basename(urlparse(args.input).path))[0] + "_clean." + args.outputExt
     else:
         outFile = "clean." + args.outputExt
 
