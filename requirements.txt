@@ -1,2 +1,3 @@
 delegator.py
+requests
 vosk
