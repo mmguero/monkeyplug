@@ -361,9 +361,18 @@ def main():
         sys.tracebacklimit = 0
         vosk.SetLogLevel(-1)
 
+    if args.output:
+        outFile = args.output
+    elif args.input and os.path.isfile(args.input):
+        outFile = os.path.splitext(args.input)[0] + "_clean." + args.outputExt
+    elif args.input and args.input.lower().startswith("http"):
+        outFile = os.path.basename(urlparse(args.input).path)
+    else:
+        outFile = "clean." + args.outputExt
+
     Plugger(
         args.input,
-        args.output if args.output else os.path.splitext(args.input)[0] + "_clean." + args.outputExt,
+        outFile,
         args.swears,
         args.modelPath,
         args.aParams,

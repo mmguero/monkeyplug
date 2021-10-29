@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-export MONKEYPLUG_IMAGE="${MONKEYPLUG_DOCKER_IMAGE:-ghcr.io/mmguero/monkeyplug:latest}"
+export MONKEYPLUG_IMAGE="${MONKEYPLUG_DOCKER_IMAGE:-ghcr.io/mmguero/monkeyplug:small}"
 
 # run from directory containing audio file
 

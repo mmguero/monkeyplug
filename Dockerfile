@@ -28,6 +28,9 @@ RUN apt-get update -q && \
     apt-get clean && \
       rm -rf /var/cache/apt/* /var/lib/apt/lists/* /tmp/* /var/tmp/* /usr/local/bin/model/model.zip
 
+COPY --from=mwader/static-ffmpeg:latest /ffmpeg /usr/local/bin/
+COPY --from=mwader/static-ffmpeg:latest /qt-faststart /usr/local/bin/
+
 ADD *.py /usr/local/bin/
 ADD swears.txt /usr/local/bin
 
