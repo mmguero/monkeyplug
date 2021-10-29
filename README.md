@@ -43,9 +43,9 @@ options:
   -w <profanity file>, --swears <profanity file>
                         text file containing profanity (default: "swears.txt")
   -a APARAMS, --audio-params APARAMS
-                        Audio parameters for ffmpeg (default: "-c:a libvorbis -ac 1 -ar 44100 -aq 5")
+                        Audio parameters for ffmpeg (default: "-c:a libmp3lame -ab 96k -ar 44100 -ac 1")
   -x <string>, --extension <string>
-                        Output audio file extension (default: "ogg")
+                        Output audio file extension (default: "mp3")
   -m <string>, --model <string>
                         Vosk model path (default: "model")
   -f <int>, --frames <int>
