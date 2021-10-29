@@ -11,7 +11,6 @@ LABEL org.opencontainers.image.description='Dockerized monkeyplug'
 # use "vosk-model-en-us-0.22" if you want more accurate recognition (and a large image)
 ARG VOSK_MODEL_URL="https://alphacephei.com/kaldi/models/vosk-model-small-en-us-0.15.zip"
 
-ADD $VOSK_MODEL_URL /usr/local/bin/model/model.zip
 ADD requirements.txt /tmp/requirements.txt
 
 ENV DEBIAN_FRONTEND noninteractive
@@ -19,10 +18,14 @@ ENV TERM xterm
 ENV PYTHONUNBUFFERED 1
 
 RUN apt-get update -q && \
-    apt-get -y install -qq --no-install-recommends libarchive-tools && \
+    apt-get -y install -qq --no-install-recommends libarchive-tools curl && \
     python3 -m ensurepip && \
     python3 -m pip install --no-cache --upgrade -r /tmp/requirements.txt && \
+    mkdir -p /usr/local/bin/model && \
     cd /usr/local/bin/model && \
+    echo "Downloading model \"$VOSK_MODEL_URL\"..." && \
+    curl -fsSL -o ./model.zip "$VOSK_MODEL_URL" && \
+    echo "Finished" && \
     bsdtar -xf model.zip -s'|[^/]*/||' && \
     cd / && \
     apt-get clean && \
