@@ -3,6 +3,7 @@
 
 import argparse
 import delegator
+import errno
 import json
 import os
 import requests
