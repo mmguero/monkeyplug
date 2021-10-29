@@ -290,7 +290,7 @@ def main():
         dest="input",
         type=str,
         default=None,
-        required=False,
+        required=True,
         metavar="<string>",
         help="Input audio file (or URL)",
     )
