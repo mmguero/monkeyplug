@@ -18,6 +18,7 @@ AUDIO_DEFAULT_PARAMS = "-c:a libvorbis -ac 1 -ar 44100 -aq 5"
 AUDIO_DEFAULT_EXTENSION = "ogg"
 AUDIO_INTERMEDIATE_PARAMS = "-c:a pcm_s16le -ac 1 -ar 16000"
 AUDIO_DEFAULT_WAV_FRAMES_CHUNK = 16000
+SWEARS_FILENAME_DEFAULT = 'swears.txt'
 
 ###################################################################################################
 script_name = os.path.basename(__file__)
@@ -307,14 +308,14 @@ def main():
     parser.add_argument(
         "-w",
         "--swears",
-        help="text file containing profanity",
-        default=os.path.join(script_path, "swears.txt"),
+        help=f"text file containing profanity (default: \"{SWEARS_FILENAME_DEFAULT}\")",
+        default=os.path.join(script_path, SWEARS_FILENAME_DEFAULT),
         metavar="<profanity file>",
     )
     parser.add_argument(
         "-a",
         "--audio-params",
-        help="Audio parameters for ffmpeg",
+        help=f"Audio parameters for ffmpeg (default: \"{AUDIO_DEFAULT_PARAMS}\")",
         dest="aParams",
         default=AUDIO_DEFAULT_PARAMS,
     )
@@ -326,7 +327,7 @@ def main():
         default=AUDIO_DEFAULT_EXTENSION,
         required=False,
         metavar="<string>",
-        help="Output audio file extension",
+        help=f"Output audio file extension (default: \"{AUDIO_DEFAULT_EXTENSION}\")",
     )
     parser.add_argument(
         "-m",
@@ -335,7 +336,7 @@ def main():
         metavar="<string>",
         type=str,
         default=os.getenv("VOSK_MODEL", os.path.join(script_path, "model")),
-        help="Vosk model path",
+        help="Vosk model path (default: \"model\")",
     )
     parser.add_argument(
         "-f",
@@ -344,7 +345,7 @@ def main():
         metavar="<int>",
         type=int,
         default=os.getenv("VOSK_READ_FRAMES", AUDIO_DEFAULT_WAV_FRAMES_CHUNK),
-        help="WAV frame chunk",
+        help=f"WAV frame chunk (default: {AUDIO_DEFAULT_WAV_FRAMES_CHUNK})",
     )
     try:
         parser.error = parser.exit

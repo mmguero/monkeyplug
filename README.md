@@ -35,15 +35,15 @@ options:
   -o <string>, --output <string>
                         Output audio file
   -w <profanity file>, --swears <profanity file>
-                        text file containing profanity
+                        text file containing profanity (default: "swears.txt")
   -a APARAMS, --audio-params APARAMS
-                        Audio parameters for ffmpeg
+                        Audio parameters for ffmpeg (default: "-c:a libvorbis -ac 1 -ar 44100 -aq 5")
   -x <string>, --extension <string>
-                        Output audio file extension
+                        Output audio file extension (default: "ogg")
   -m <string>, --model <string>
-                        Vosk model path
+                        Vosk model path (default: "model")
   -f <int>, --frames <int>
-                        WAV frame chunk
+                        WAV frame chunk (default: 16000)
 ```
 
 ### Docker
