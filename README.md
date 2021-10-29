@@ -9,6 +9,12 @@ monkeyplug is a little script to mute profanity in audio files (intended for pod
 
 You can then use your favorite media player to play the cleaned audio file.
 
+monkeyplug is part of a family of projects with similar goals:
+
+* [cleanvid](https://github.com/mmguero/cleanvid) for audio files
+* [monkeyplug](https://github.com/mmguero/monkeyplug) for ebooks
+* [montag](https://github.com/mmguero/montag) for ebooks
+
 ## Prerequisites
 
 [monkeyplug](monkeyplug.py) requires:
