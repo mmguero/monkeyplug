@@ -1,5 +1,7 @@
 # monkeyplug
 
+![Docker Images](https://github.com/mmguero/monkeyplug/workflows/monkeyplug-build-push-ghcr/badge.svg)
+
 monkeyplug is a little script to mute profanity in audio files (intended for podcasts, but YMMV) in a few simple steps:
 
 1. The user provides a local audio file (or a URL pointing to an audio file which is downloaded)
