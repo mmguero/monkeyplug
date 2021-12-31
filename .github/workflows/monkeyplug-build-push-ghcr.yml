@@ -43,7 +43,7 @@ jobs:
         uses: docker/build-push-action@v2
         with:
           context: .
-          file: ./Dockerfile
+          file: ./docker/Dockerfile
           push: true
           tags: ghcr.io/${{ github.repository_owner }}/monkeyplug:small
       -
@@ -51,7 +51,7 @@ jobs:
         uses: docker/build-push-action@v2
         with:
           context: .
-          file: ./Dockerfile
+          file: ./docker/Dockerfile
           build-args: |
             VOSK_MODEL_URL=http://alphacephei.com/vosk/models/vosk-model-en-us-0.22.zip
           push: true

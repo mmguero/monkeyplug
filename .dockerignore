@@ -7,5 +7,5 @@
 **/*.mp4
 **/*.wma
 **/*.aac
-model
+**/model
 **/__pycache__
