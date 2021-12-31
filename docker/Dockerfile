@@ -22,7 +22,6 @@ RUN apt-get update -q && \
     apt-get -y install -qq --no-install-recommends libarchive-tools curl && \
     python3 -m ensurepip && \
     python3 -m pip install --no-cache /usr/local/src/monkeyplug && \
-    rm -rf /usr/local/src/monkeyplug && \
     mkdir -p /opt/vosk_model && \
     cd /opt/vosk_model && \
     echo "Downloading model \"$VOSK_MODEL_URL\"..." && \
@@ -31,7 +30,7 @@ RUN apt-get update -q && \
     bsdtar -xf model.zip -s'|[^/]*/||' && \
     cd / && \
     apt-get clean && \
-      rm -rf /var/cache/apt/* /var/lib/apt/lists/* /tmp/* /var/tmp/* /opt/vosk_model/model.zip
+      rm -rf /var/cache/apt/* /var/lib/apt/lists/* /tmp/* /var/tmp/* /usr/local/src/monkeyplug /opt/vosk_model/model.zip
 
 COPY --from=mwader/static-ffmpeg:latest /ffmpeg /usr/local/bin/
 COPY --from=mwader/static-ffmpeg:latest /ffprobe /usr/local/bin/
