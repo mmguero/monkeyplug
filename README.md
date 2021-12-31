@@ -72,7 +72,7 @@ options:
 
 ### Docker
 
-Alternately, a [Dockerfile](./docker/Dockerfile) is provided to allow you to run monkeyplug in Docker. You can pull either the `ghcr.io/mmguero/monkeyplug:small` or `ghcr.io/mmguero/monkeyplug:large` Docker images, or build with [`build_docker.sh`](build_docker.sh), then run [`monkeyplug-docker.sh`](./docker/monkeyplug-docker.sh) inside the directory where your audio files are located.
+Alternately, a [Dockerfile](./docker/Dockerfile) is provided to allow you to run monkeyplug in Docker. You can pull either the `ghcr.io/mmguero/monkeyplug:small` or `ghcr.io/mmguero/monkeyplug:large` Docker images, or build with [`build_docker.sh`](./docker/build_docker.sh), then run [`monkeyplug-docker.sh`](./docker/monkeyplug-docker.sh) inside the directory where your audio files are located.
 
 ## Contributing
 
