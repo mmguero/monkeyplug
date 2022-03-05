@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 
-# use monkeyplug.py or monkeyplug-docker.sh, if available
+# use monkeyplug, monkeyplug.py or monkeyplug-docker.sh, if available
 MONKEYPLUG_BIN=""
-if command -v monkeyplug.py >/dev/null; then
+if command -v monkeyplug >/dev/null; then
+  MONKEYPLUG_BIN=monkeyplug
+elif command -v monkeyplug.py >/dev/null; then
   MONKEYPLUG_BIN=monkeyplug.py
 elif command -v monkeyplug-docker.sh >/dev/null; then
   MONKEYPLUG_BIN=monkeyplug-docker.sh
