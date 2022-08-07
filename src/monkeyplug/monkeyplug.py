@@ -17,7 +17,7 @@ from urllib.parse import urlparse
 AUDIO_DEFAULT_PARAMS = "-c:a libmp3lame -ab 96k -ar 44100 -ac 2"
 AUDIO_DEFAULT_EXTENSION = "mp3"
 AUDIO_INTERMEDIATE_PARAMS = "-c:a pcm_s16le -ac 1 -ar 16000"
-AUDIO_DEFAULT_WAV_FRAMES_CHUNK = 16000
+AUDIO_DEFAULT_WAV_FRAMES_CHUNK = 8000
 SWEARS_FILENAME_DEFAULT = 'swears.txt'
 
 ###################################################################################################

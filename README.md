@@ -67,7 +67,7 @@ options:
   -m <string>, --model <string>
                         Vosk model path (default: "model")
   -f <int>, --frames <int>
-                        WAV frame chunk (default: 16000)
+                        WAV frame chunk (default: 8000)
 ```
 
 ### Docker
