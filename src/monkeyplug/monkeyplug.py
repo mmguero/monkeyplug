@@ -5,17 +5,26 @@ import argparse
 import delegator
 import errno
 import json
+import mutagen
 import os
 import requests
 import sys
-import wave
 import vosk
+import wave
 
 from urllib.parse import urlparse
 
 ###################################################################################################
-AUDIO_DEFAULT_PARAMS = "-c:a libmp3lame -ab 96k -ar 44100 -ac 2"
+AUDIO_DEFAULT_PARAMS = {
+    "flac": "-c:a flac -ar 44100 -ac 2",
+    "m4a": "-c:a aac -ab 128k -ar 44100 -ac 2",
+    "mp3": "-c:a libmp3lame -ab 128k -ar 44100 -ac 2",
+    "ogg": "-c:a libvorbis -qscale:a 4 -ar 44100 -ac 2",
+    "opus": "-c:a libopus -b:a bitrate 182K -ar 44100 -ac 2",
+    "wav": "-c:a pcm_s16le -ar 44100 -ac 2",
+}
 AUDIO_DEFAULT_EXTENSION = "mp3"
+AUDIO_MATCH_EXTENSION = "MATCH"
 AUDIO_INTERMEDIATE_PARAMS = "-c:a pcm_s16le -ac 1 -ar 16000"
 AUDIO_DEFAULT_WAV_FRAMES_CHUNK = 8000
 SWEARS_FILENAME_DEFAULT = 'swears.txt'
@@ -81,6 +90,7 @@ class Plugger(object):
     debug = False
     inputAudioFileSpec = ""
     outputAudioFileSpec = ""
+    outputAudioFileExt = ""
     tmpWavFileSpec = ""
     tmpDownloadedFileSpec = ""
     swearsFileSpec = ""
@@ -90,22 +100,28 @@ class Plugger(object):
     muteTimeList = []
     modelPath = ""
     wavReadFramesChunk = AUDIO_DEFAULT_WAV_FRAMES_CHUNK
-    aParams = AUDIO_DEFAULT_PARAMS
+    forceDespiteTag = False
+    aParams = None
+    tags = None
 
     ######## init #################################################################
     def __init__(
         self,
         iAudioFileSpec,
         oAudioFileSpec,
+        oAudioFileExt,
         iSwearsFileSpec,
         mPath,
-        aParams=AUDIO_DEFAULT_PARAMS,
+        aParams=None,
         wChunk=AUDIO_DEFAULT_WAV_FRAMES_CHUNK,
+        force=False,
         dbug=False,
     ):
         self.wavReadFramesChunk = wChunk
+        self.forceDespiteTag = force
         self.debug = dbug
 
+        # make sure the VOSK model path exists
         if (mPath is not None) and os.path.isdir(mPath):
             self.modelPath = mPath
         else:
@@ -115,6 +131,7 @@ class Plugger(object):
                 mPath,
             )
 
+        # determine input audio file name, or download and save audio file
         if (iAudioFileSpec is not None) and os.path.isfile(iAudioFileSpec):
             self.inputAudioFileSpec = iAudioFileSpec
         elif iAudioFileSpec.lower().startswith("http"):
@@ -126,10 +143,50 @@ class Plugger(object):
         else:
             raise IOError(errno.ENOENT, os.strerror(errno.ENOENT), iAudioFileSpec)
 
+        # input file should exist locally by now
+        if os.path.isfile(self.inputAudioFileSpec):
+            inParts = os.path.splitext(self.inputAudioFileSpec)
+        else:
+            raise IOError(errno.ENOENT, os.strerror(errno.ENOENT), self.inputAudioFileSpec)
+
+        # determine output audio file name (either specified or based on input filename)
         if (oAudioFileSpec is not None) and (len(oAudioFileSpec) > 0):
+            # output filename was specified
             self.outputAudioFileSpec = oAudioFileSpec
-            if os.path.isfile(self.outputAudioFileSpec):
-                os.remove(self.outputAudioFileSpec)
+        else:
+            if (oAudioFileExt is not None) and (oAudioFileExt.upper() == AUDIO_MATCH_EXTENSION):
+                # output filename not specified, base on input filename matching extension
+                self.outputAudioFileSpec = inParts[0] + "_clean" + inParts[1]
+            elif (oAudioFileExt is not None) and (len(oAudioFileExt) > 0):
+                # output filename not specified, base on input filename with specified extension
+                self.outputAudioFileSpec = inParts[0] + "_clean." + oAudioFileExt.lower().lstrip('.')
+            else:
+                # can't determine what output audio file extension should be
+                raise ValueError("Output audio file extension unspecified")
+
+        # determine output audio file extension if it's not already obvious
+        outParts = os.path.splitext(self.outputAudioFileSpec)
+        self.outputAudioFileExt = outParts[1].lower().lstrip('.')
+
+        if len(self.outputAudioFileExt) == 0:
+            # we don't know the output extension yet (not specified as part of output audio file)
+            if (oAudioFileExt is not None) and (oAudioFileExt.upper() == AUDIO_MATCH_EXTENSION):
+                self.outputAudioFileSpec = self.outputAudioFileSpec + inParts[1]
+            elif (oAudioFileExt is not None) and (len(oAudioFileExt) > 0):
+                self.outputAudioFileSpec = self.outputAudioFileSpec + '.' + oAudioFileExt.lower().lstrip('.')
+            else:
+                raise ValueError("Output audio file extension unspecified")
+            outParts = os.path.splitext(self.outputAudioFileSpec)
+            self.outputAudioFileExt = outParts[1].lower().lstrip('.')
+
+        if (len(self.outputAudioFileExt) == 0) or (
+            ((aParams is None) or (len(aParams) == 0)) and (self.outputAudioFileExt not in AUDIO_DEFAULT_PARAMS)
+        ):
+            raise ValueError("Output audio file extension unspecified or unsupported")
+
+        # if output file already exists, remove as we'll be overwriting it anyway
+        if os.path.isfile(self.outputAudioFileSpec):
+            os.remove(self.outputAudioFileSpec)
 
         # load the swears file (not actually mapping right now, but who knows, speech synthesis maybe someday?)
         if (iSwearsFileSpec is not None) and os.path.isfile(iSwearsFileSpec):
@@ -146,10 +203,25 @@ class Plugger(object):
             else:
                 self.swearsMap[lineMap[0]] = "*****"
 
-        # if they specified custom ffmpeg encoding params
-        self.aParams = aParams
-        if self.aParams.startswith("base64:"):
-            self.aParams = base64.b64decode(self.aParams[7:]).decode("utf-8")
+        if (aParams is None) or (len(aParams) == 0):
+            # we're using ffmpeg encoding params based on output audio file extension
+            self.aParams = AUDIO_DEFAULT_PARAMS[self.outputAudioFileExt]
+        else:
+            # they specified custom ffmpeg encoding params
+            self.aParams = aParams
+            if self.aParams.startswith("base64:"):
+                self.aParams = base64.b64decode(self.aParams[7:]).decode("utf-8")
+
+        if self.debug:
+            eprint(f'Input: {self.inputAudioFileSpec}')
+            eprint(f'Output: {self.outputAudioFileSpec}')
+            eprint(f'Output Extension: {self.outputAudioFileExt}')
+            eprint(f'Encode parameters: {self.aParams}')
+            eprint(f'Profanity file: {self.swearsFileSpec}')
+            eprint(f'Intermediate audio file: {self.tmpWavFileSpec}')
+            eprint(f'Intermediate downloaded file: {self.tmpDownloadedFileSpec}')
+            eprint(f'Read frames: {self.wavReadFramesChunk}')
+            eprint(f'Force despite tags: {self.forceDespiteTag}')
 
     ######## del ##################################################################
     def __del__(self):
@@ -315,19 +387,19 @@ def RunMonkeyPlug():
     parser.add_argument(
         "-a",
         "--audio-params",
-        help=f"Audio parameters for ffmpeg (default: \"{AUDIO_DEFAULT_PARAMS}\")",
+        help=f"Audio parameters for ffmpeg (default depends on output audio file type\")",
         dest="aParams",
-        default=AUDIO_DEFAULT_PARAMS,
+        default=None,
     )
     parser.add_argument(
         "-x",
         "--extension",
         dest="outputExt",
         type=str,
-        default=AUDIO_DEFAULT_EXTENSION,
+        default=AUDIO_MATCH_EXTENSION,
         required=False,
         metavar="<string>",
-        help=f"Output audio file extension (default: \"{AUDIO_DEFAULT_EXTENSION}\")",
+        help=f"Output audio file extension (default: extension of --output, or \"{AUDIO_MATCH_EXTENSION}\")",
     )
     parser.add_argument(
         "-m",
@@ -347,6 +419,17 @@ def RunMonkeyPlug():
         default=os.getenv("VOSK_READ_FRAMES", AUDIO_DEFAULT_WAV_FRAMES_CHUNK),
         help=f"WAV frame chunk (default: {AUDIO_DEFAULT_WAV_FRAMES_CHUNK})",
     )
+    parser.add_argument(
+        "--force",
+        dest="forceDespiteTag",
+        type=str2bool,
+        nargs="?",
+        const=True,
+        default=False,
+        metavar="true|false",
+        help="Process file despite existence of embedded tag",
+    )
+
     try:
         parser.error = parser.exit
         args = parser.parse_args()
@@ -362,23 +445,16 @@ def RunMonkeyPlug():
         sys.tracebacklimit = 0
         vosk.SetLogLevel(-1)
 
-    if args.output:
-        outFile = args.output
-    elif args.input and os.path.isfile(args.input):
-        outFile = os.path.splitext(args.input)[0] + "_clean." + args.outputExt
-    elif args.input and args.input.lower().startswith("http"):
-        outFile = os.path.splitext(os.path.basename(urlparse(args.input).path))[0] + "_clean." + args.outputExt
-    else:
-        outFile = "clean." + args.outputExt
-
     Plugger(
         args.input,
-        outFile,
+        args.output,
+        args.outputExt,
         args.swears,
         args.modelPath,
-        args.aParams,
-        args.readFramesChunk,
-        args.debug,
+        aParams=args.aParams,
+        wChunk=args.readFramesChunk,
+        force=args.forceDespiteTag,
+        dbug=args.debug,
     ).EncodeCleanAudio()
 
 

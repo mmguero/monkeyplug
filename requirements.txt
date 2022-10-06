@@ -1,3 +1,4 @@
 delegator.py
+mutagen
 requests
 vosk
