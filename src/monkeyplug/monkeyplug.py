@@ -30,7 +30,7 @@ AUDIO_INTERMEDIATE_PARAMS = "-c:a pcm_s16le -ac 1 -ar 16000"
 AUDIO_DEFAULT_WAV_FRAMES_CHUNK = 8000
 SWEARS_FILENAME_DEFAULT = 'swears.txt'
 MUTAGEN_METADATA_TAGS = ['encodedby', 'comment']
-MUTAGEN_METADATA_TAG_VALUE = 'monkeyplug'
+MUTAGEN_METADATA_TAG_VALUE = u'monkeyplug'
 
 ###################################################################################################
 script_name = os.path.basename(__file__)
