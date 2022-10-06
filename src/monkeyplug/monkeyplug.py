@@ -21,7 +21,7 @@ AUDIO_DEFAULT_PARAMS = {
     "m4a": "-c:a aac -ab 128k -ar 44100 -ac 2",
     "mp3": "-c:a libmp3lame -ab 128k -ar 44100 -ac 2",
     "ogg": "-c:a libvorbis -qscale:a 4 -ar 44100 -ac 2",
-    "opus": "-c:a libopus -b:a 128K -ar 44100 -ac 2",
+    "opus": "-c:a libopus -b:a 128K -ar 48000 -ac 2",
     "wav": "-c:a pcm_s16le -ar 44100 -ac 2",
 }
 AUDIO_DEFAULT_EXTENSION = "mp3"
