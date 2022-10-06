@@ -5,6 +5,7 @@ import argparse
 import delegator
 import errno
 import json
+import mmguero
 import mutagen
 import os
 import requests
@@ -28,37 +29,12 @@ AUDIO_MATCH_EXTENSION = "MATCH"
 AUDIO_INTERMEDIATE_PARAMS = "-c:a pcm_s16le -ac 1 -ar 16000"
 AUDIO_DEFAULT_WAV_FRAMES_CHUNK = 8000
 SWEARS_FILENAME_DEFAULT = 'swears.txt'
+MUTAGEN_METADATA_TAGS = ['encodedby', 'comment']
+MUTAGEN_METADATA_TAG_VALUE = 'monkeyplug'
 
 ###################################################################################################
 script_name = os.path.basename(__file__)
 script_path = os.path.dirname(os.path.realpath(__file__))
-
-###################################################################################################
-# print to stderr
-def eprint(*args, **kwargs):
-    print(*args, file=sys.stderr, **kwargs)
-    sys.stderr.flush()
-
-
-###################################################################################################
-# convenient boolean argument parsing
-def str2bool(v):
-    if v.lower() in ("yes", "true", "t", "y", "1"):
-        return True
-    elif v.lower() in ("no", "false", "f", "n", "0"):
-        return False
-    else:
-        raise ValueError("Boolean value expected")
-
-
-###################################################################################################
-# nice human-readable file sizes
-def SizeHumanFormat(num, suffix="B"):
-    for unit in ["", "Ki", "Mi", "Gi", "Ti", "Pi", "Ei", "Zi"]:
-        if abs(num) < 1024.0:
-            return f"{num:3.1f}{unit}{suffix}"
-        num /= 1024.0
-    return f"{num:.1f}{'Yi'}{suffix}"
 
 
 ###################################################################################################
@@ -73,8 +49,8 @@ def DownloadToFile(url, local_filename=None, chunk_bytes=4096, debug=False):
     fExists = os.path.isfile(tmpDownloadedFileSpec)
     fSize = os.path.getsize(tmpDownloadedFileSpec)
     if debug:
-        eprint(
-            f"Download of {url} to {tmpDownloadedFileSpec} {'succeeded' if fExists else 'failed'} ({SizeHumanFormat(fSize)})"
+        mmguero.eprint(
+            f"Download of {url} to {tmpDownloadedFileSpec} {'succeeded' if fExists else 'failed'} ({mmguero.SizeHumanFormat(fSize)})"
         )
 
     if fExists and (fSize > 0):
@@ -83,6 +59,55 @@ def DownloadToFile(url, local_filename=None, chunk_bytes=4096, debug=False):
         if fExists:
             os.remove(tmpDownloadedFileSpec)
         return None
+
+
+###################################################################################################
+# Get tag from file to indicate monkeyplug has already been set
+def GetMonkeyplugTagged(local_filename, debug=False):
+    result = False
+    if os.path.isfile(local_filename):
+        mut = mutagen.File(local_filename, easy=True)
+        if debug:
+            mmguero.eprint(f'Tags of {local_filename}: {mut}')
+        if hasattr(mut, 'get'):
+            for tag in MUTAGEN_METADATA_TAGS:
+                try:
+                    if MUTAGEN_METADATA_TAG_VALUE in mmguero.GetIterable(mut.get(tag, default=())):
+                        result = True
+                        break
+                except Exception as e:
+                    if debug:
+                        mmguero.eprint(e)
+    return result
+
+
+###################################################################################################
+# Set tag to file to indicate monkeyplug has worked its magic
+def SetMonkeyplugTag(local_filename, debug=False):
+    result = False
+    if os.path.isfile(local_filename):
+        mut = mutagen.File(local_filename, easy=True)
+        if debug:
+            mmguero.eprint(f'Tags of {local_filename} before: {mut}')
+        if hasattr(mut, '__setitem__'):
+            for tag in MUTAGEN_METADATA_TAGS:
+                try:
+                    mut[tag] = MUTAGEN_METADATA_TAG_VALUE
+                    result = True
+                    break
+                except mutagen.MutagenError as me:
+                    if debug:
+                        mmguero.eprint(me)
+            if result:
+                try:
+                    mut.save(local_filename)
+                except Exception as e:
+                    result = False
+                    mmguero.eprint(e)
+            if debug:
+                mmguero.eprint(f'Tags of {local_filename} after: {mut}')
+
+    return result
 
 
 #################################################################################
@@ -213,15 +238,15 @@ class Plugger(object):
                 self.aParams = base64.b64decode(self.aParams[7:]).decode("utf-8")
 
         if self.debug:
-            eprint(f'Input: {self.inputAudioFileSpec}')
-            eprint(f'Output: {self.outputAudioFileSpec}')
-            eprint(f'Output Extension: {self.outputAudioFileExt}')
-            eprint(f'Encode parameters: {self.aParams}')
-            eprint(f'Profanity file: {self.swearsFileSpec}')
-            eprint(f'Intermediate audio file: {self.tmpWavFileSpec}')
-            eprint(f'Intermediate downloaded file: {self.tmpDownloadedFileSpec}')
-            eprint(f'Read frames: {self.wavReadFramesChunk}')
-            eprint(f'Force despite tags: {self.forceDespiteTag}')
+            mmguero.eprint(f'Input: {self.inputAudioFileSpec}')
+            mmguero.eprint(f'Output: {self.outputAudioFileSpec}')
+            mmguero.eprint(f'Output Extension: {self.outputAudioFileExt}')
+            mmguero.eprint(f'Encode parameters: {self.aParams}')
+            mmguero.eprint(f'Profanity file: {self.swearsFileSpec}')
+            mmguero.eprint(f'Intermediate audio file: {self.tmpWavFileSpec}')
+            mmguero.eprint(f'Intermediate downloaded file: {self.tmpDownloadedFileSpec}')
+            mmguero.eprint(f'Read frames: {self.wavReadFramesChunk}')
+            mmguero.eprint(f'Force despite tags: {self.forceDespiteTag}')
 
     ######## del ##################################################################
     def __del__(self):
@@ -248,8 +273,8 @@ class Plugger(object):
         )
         ffmpegResult = delegator.run(ffmpegCmd, block=True)
         if (ffmpegResult.return_code != 0) or (not os.path.isfile(self.tmpWavFileSpec)):
-            print(ffmpegCmd)
-            print(ffmpegResult.err)
+            mmguero.eprint(ffmpegCmd)
+            mmguero.eprint(ffmpegResult.err)
             raise ValueError(
                 f"Could not convert {self.inputAudioFileSpec} to {self.tmpWavFileSpec} (16 kHz, mono, s16 PCM WAV)"
             )
@@ -284,7 +309,7 @@ class Plugger(object):
                 self.wordList.extend(res["result"])
 
             if self.debug:
-                eprint(json.dumps(self.wordList))
+                mmguero.eprint(json.dumps(self.wordList))
 
         return self.wordList
 
@@ -295,7 +320,7 @@ class Plugger(object):
 
         self.naughtyWordList = [word for word in self.wordList if (word["word"].lower() in self.swearsMap)]
         if self.debug:
-            eprint(self.naughtyWordList)
+            mmguero.eprint(self.naughtyWordList)
 
         self.muteTimeList = [
             "volume=enable='between(t,"
@@ -306,34 +331,39 @@ class Plugger(object):
             for word in self.naughtyWordList
         ]
         if self.debug:
-            eprint(self.muteTimeList)
+            mmguero.eprint(self.muteTimeList)
 
         return self.muteTimeList
 
     ######## EncodeCleanAudio ####################################################
     def EncodeCleanAudio(self):
-        self.CreateCleanMuteList()
+        if (self.forceDespiteTag is True) or (GetMonkeyplugTagged(self.inputAudioFileSpec, debug=self.debug) is False):
+            self.CreateCleanMuteList()
 
-        if len(self.muteTimeList) > 0:
-            audioArgs = ' -af "' + ",".join(self.muteTimeList) + '" '
+            if len(self.muteTimeList) > 0:
+                audioArgs = ' -af "' + ",".join(self.muteTimeList) + '" '
+            else:
+                audioArgs = " "
+            ffmpegCmd = (
+                'ffmpeg -y -i "'
+                + self.inputAudioFileSpec
+                + '" '
+                + audioArgs
+                + f'{self.aParams} "'
+                + self.outputAudioFileSpec
+                + '"'
+            )
+            ffmpegResult = delegator.run(ffmpegCmd, block=True)
+            if (ffmpegResult.return_code != 0) or (not os.path.isfile(self.outputAudioFileSpec)):
+                mmguero.eprint(ffmpegCmd)
+                mmguero.eprint(ffmpegResult.err)
+                raise ValueError(f"Could not process {self.inputAudioFileSpec}")
+
+            SetMonkeyplugTag(self.outputAudioFileSpec, debug=self.debug)
+            return self.outputAudioFileSpec
+
         else:
-            audioArgs = " "
-        ffmpegCmd = (
-            'ffmpeg -y -i "'
-            + self.inputAudioFileSpec
-            + '" '
-            + audioArgs
-            + f'{self.aParams} "'
-            + self.outputAudioFileSpec
-            + '"'
-        )
-        ffmpegResult = delegator.run(ffmpegCmd, block=True)
-        if (ffmpegResult.return_code != 0) or (not os.path.isfile(self.outputAudioFileSpec)):
-            print(ffmpegCmd)
-            print(ffmpegResult.err)
-            raise ValueError(f"Could not process {self.inputAudioFileSpec}")
-
-        return self.outputAudioFileSpec
+            return self.inputAudioFileSpec
 
 
 #################################################################################
@@ -350,7 +380,7 @@ def RunMonkeyPlug():
         "-v",
         "--verbose",
         dest="debug",
-        type=str2bool,
+        type=mmguero.str2bool,
         nargs="?",
         const=True,
         default=False,
@@ -422,7 +452,7 @@ def RunMonkeyPlug():
     parser.add_argument(
         "--force",
         dest="forceDespiteTag",
-        type=str2bool,
+        type=mmguero.str2bool,
         nargs="?",
         const=True,
         default=False,
@@ -438,24 +468,26 @@ def RunMonkeyPlug():
         exit(2)
 
     if args.debug:
-        eprint(os.path.join(script_path, script_name))
-        eprint("Arguments: {}".format(sys.argv[1:]))
-        eprint("Arguments: {}".format(args))
+        mmguero.eprint(os.path.join(script_path, script_name))
+        mmguero.eprint("Arguments: {}".format(sys.argv[1:]))
+        mmguero.eprint("Arguments: {}".format(args))
     else:
         sys.tracebacklimit = 0
         vosk.SetLogLevel(-1)
 
-    Plugger(
-        args.input,
-        args.output,
-        args.outputExt,
-        args.swears,
-        args.modelPath,
-        aParams=args.aParams,
-        wChunk=args.readFramesChunk,
-        force=args.forceDespiteTag,
-        dbug=args.debug,
-    ).EncodeCleanAudio()
+    print(
+        Plugger(
+            args.input,
+            args.output,
+            args.outputExt,
+            args.swears,
+            args.modelPath,
+            aParams=args.aParams,
+            wChunk=args.readFramesChunk,
+            force=args.forceDespiteTag,
+            dbug=args.debug,
+        ).EncodeCleanAudio()
+    )
 
 
 ###################################################################################################

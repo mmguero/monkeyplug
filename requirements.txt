@@ -1,4 +1,5 @@
 delegator.py
+mmguero
 mutagen
 requests
 vosk
