@@ -18,7 +18,7 @@ VALUE=""
 while getopts 'v:d:t:f:o:' OPTION; do
     case "$OPTION" in
         v)
-          VALUE="$OPTARG"
+          VALUE="$(echo "$OPTARG" | sed "s/'/''/g")"
           ;;
 
         d)
