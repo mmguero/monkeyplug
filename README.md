@@ -55,19 +55,19 @@ options:
   -v [true|false], --verbose [true|false]
                         Verbose/debug output
   -i <string>, --input <string>
-                        Input audio file (or URL)
+                        Input file (or URL)
   -o <string>, --output <string>
-                        Output audio file
+                        Output file
   -w <profanity file>, --swears <profanity file>
                         text file containing profanity (default: "swears.txt")
   -a APARAMS, --audio-params APARAMS
-                        Audio parameters for ffmpeg (default: "-c:a libmp3lame -ab 96k -ar 44100 -ac 2")
-  -x <string>, --extension <string>
-                        Output audio file extension (default: "mp3")
+                        Audio parameters for ffmpeg (default depends on output audio codec")
+  -f <string>, --format <string>
+                        Output file format (default: inferred from extension of --output, or "MATCH")
   -m <string>, --model <string>
                         Vosk model path (default: "model")
-  -f <int>, --frames <int>
-                        WAV frame chunk (default: 8000)
+  --frames <int>        WAV frame chunk (default: 8000)
+  --force [true|false]  Process file despite existence of embedded tag
 ```
 
 ### Docker
