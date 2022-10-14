@@ -17,15 +17,15 @@ from urllib.parse import urlparse
 
 ###################################################################################################
 AUDIO_DEFAULT_PARAMS = {
-    "flac": "-c:a flac -ar 44100 -ac 2",
-    "m4a": "-c:a aac -ab 128k -ar 44100 -ac 2",
-    "mp3": "-c:a libmp3lame -ab 128k -ar 44100 -ac 2",
-    "ogg": "-c:a libvorbis -qscale:a 4 -ar 44100 -ac 2",
-    "opus": "-c:a libopus -b:a 128K -ar 48000 -ac 2",
+    "flac": ["-c:a", "flac", "-ar", "44100", "-ac", "2"],
+    "m4a": ["-c:a", "aac", "-ab", "128k", "-ar", "44100", "-ac", "2"],
+    "mp3": ["-c:a", "libmp3lame", "-ab", "128k", "-ar", "44100", "-ac", "2"],
+    "ogg": ["-c:a", "libvorbis", "-qscale:a", "4", "-ar", "44100", "-ac", "2"],
+    "opus": ["-c:a", "libopus", "-b:a", "128K", "-ar", "48000", "-ac", "2"],
 }
 AUDIO_DEFAULT_EXTENSION = "mp3"
 AUDIO_MATCH_EXTENSION = "MATCH"
-AUDIO_INTERMEDIATE_PARAMS = "-c:a pcm_s16le -ac 1 -ar 16000"
+AUDIO_INTERMEDIATE_PARAMS = ["-c:a", "pcm_s16le", "-ac", "1", "-ar", "16000"]
 AUDIO_DEFAULT_WAV_FRAMES_CHUNK = 8000
 SWEARS_FILENAME_DEFAULT = 'swears.txt'
 MUTAGEN_METADATA_TAGS = ['encodedby', 'comment']
@@ -109,10 +109,48 @@ def SetMonkeyplugTag(local_filename, debug=False):
     return result
 
 
+###################################################################################################
+# get stream codecs from an input filename
+# e.g. result: {'video': {'h264'}, 'audio': {'eac3'}, 'subtitle': {'subrip'}}
+def GetCodecs(local_filename, debug=False):
+    result = {}
+    if os.path.isfile(local_filename):
+        ffprobeCmd = [
+            'ffprobe',
+            '-v',
+            'quiet',
+            '-print_format',
+            'json',
+            '-show_format',
+            '-show_streams',
+            local_filename,
+        ]
+        ffprobeResult, ffprobeOutput = mmguero.RunProcess(ffprobeCmd, stdout=True, stderr=False, debug=debug)
+        if ffprobeResult == 0:
+            ffprobeOutput = mmguero.LoadStrIfJson(' '.join(ffprobeOutput))
+            if 'streams' in ffprobeOutput:
+                for stream in ffprobeOutput['streams']:
+                    if 'codec_name' in stream and 'codec_type' in stream:
+                        cType = stream['codec_type'].lower()
+                        cValue = stream['codec_name'].lower()
+                        if cType in result:
+                            result[cType].add(cValue)
+                        else:
+                            result[cType] = set([cValue])
+        else:
+            mmguero.eprint(ffprobeCmd)
+            mmguero.eprint(ffprobeResult)
+            mmguero.eprint(ffprobeOutput)
+            raise ValueError(f"Could not analyze {local_filename}")
+
+    return result
+
+
 #################################################################################
 class Plugger(object):
     debug = False
     inputAudioFileSpec = ""
+    inputCodecs = {}
     outputAudioFileSpec = ""
     outputAudioFileExt = ""
     tmpWavFileSpec = ""
@@ -170,6 +208,7 @@ class Plugger(object):
         # input file should exist locally by now
         if os.path.isfile(self.inputAudioFileSpec):
             inParts = os.path.splitext(self.inputAudioFileSpec)
+            self.inputCodecs = GetCodecs(self.inputAudioFileSpec)
         else:
             raise IOError(errno.ENOENT, os.strerror(errno.ENOENT), self.inputAudioFileSpec)
 
@@ -234,10 +273,11 @@ class Plugger(object):
             # they specified custom ffmpeg encoding params
             self.aParams = aParams
             if self.aParams.startswith("base64:"):
-                self.aParams = base64.b64decode(self.aParams[7:]).decode("utf-8")
+                self.aParams = base64.b64decode(self.aParams[7:]).decode("utf-8").split(' ')
 
         if self.debug:
             mmguero.eprint(f'Input: {self.inputAudioFileSpec}')
+            mmguero.eprint(f'Input codec: {self.inputCodecs}')
             mmguero.eprint(f'Output: {self.outputAudioFileSpec}')
             mmguero.eprint(f'Output Extension: {self.outputAudioFileExt}')
             mmguero.eprint(f'Encode parameters: {self.aParams}')
@@ -261,19 +301,19 @@ class Plugger(object):
     def CreateIntermediateWAV(self):
         audioFileParts = os.path.splitext(self.inputAudioFileSpec)
         self.tmpWavFileSpec = audioFileParts[0] + ".wav"
-        ffmpegCmd = (
-            'ffmpeg -y -i "'
-            + self.inputAudioFileSpec
-            + '" '
-            + AUDIO_INTERMEDIATE_PARAMS
-            + ' "'
-            + self.tmpWavFileSpec
-            + '"'
-        )
-        ffmpegResult = delegator.run(ffmpegCmd, block=True)
-        if (ffmpegResult.return_code != 0) or (not os.path.isfile(self.tmpWavFileSpec)):
+        ffmpegCmd = [
+            'ffmpeg',
+            '-y',
+            '-i',
+            self.inputAudioFileSpec,
+            AUDIO_INTERMEDIATE_PARAMS,
+            self.tmpWavFileSpec,
+        ]
+        ffmpegResult, ffmpegOutput = mmguero.RunProcess(ffmpegCmd, stdout=True, stderr=True, debug=self.debug)
+        if (ffmpegResult != 0) or (not os.path.isfile(self.tmpWavFileSpec)):
             mmguero.eprint(ffmpegCmd)
-            mmguero.eprint(ffmpegResult.err)
+            mmguero.eprint(ffmpegResult)
+            mmguero.eprint(ffmpegOutput)
             raise ValueError(
                 f"Could not convert {self.inputAudioFileSpec} to {self.tmpWavFileSpec} (16 kHz, mono, s16 PCM WAV)"
             )
@@ -340,22 +380,23 @@ class Plugger(object):
             self.CreateCleanMuteList()
 
             if len(self.muteTimeList) > 0:
-                audioArgs = ' -af "' + ",".join(self.muteTimeList) + '" '
+                audioArgs = ['-af', ",".join(self.muteTimeList)]
             else:
-                audioArgs = " "
-            ffmpegCmd = (
-                'ffmpeg -y -i "'
-                + self.inputAudioFileSpec
-                + '" '
-                + audioArgs
-                + f'{self.aParams} "'
-                + self.outputAudioFileSpec
-                + '"'
-            )
-            ffmpegResult = delegator.run(ffmpegCmd, block=True)
-            if (ffmpegResult.return_code != 0) or (not os.path.isfile(self.outputAudioFileSpec)):
+                audioArgs = []
+            ffmpegCmd = [
+                'ffmpeg',
+                '-y',
+                '-i',
+                self.inputAudioFileSpec,
+                audioArgs,
+                self.aParams,
+                self.outputAudioFileSpec,
+            ]
+            ffmpegResult, ffmpegOutput = mmguero.RunProcess(ffmpegCmd, stdout=True, stderr=True, debug=self.debug)
+            if (ffmpegResult != 0) or (not os.path.isfile(self.tmpWavFileSpec)):
                 mmguero.eprint(ffmpegCmd)
-                mmguero.eprint(ffmpegResult.err)
+                mmguero.eprint(ffmpegResult)
+                mmguero.eprint(ffmpegOutput)
                 raise ValueError(f"Could not process {self.inputAudioFileSpec}")
 
             SetMonkeyplugTag(self.outputAudioFileSpec, debug=self.debug)
