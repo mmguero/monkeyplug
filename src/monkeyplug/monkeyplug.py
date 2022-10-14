@@ -16,7 +16,7 @@ import wave
 from urllib.parse import urlparse
 
 ###################################################################################################
-AUDIO_DEFAULT_PARAMS_BY_EXTENSION = {
+AUDIO_DEFAULT_PARAMS_BY_FORMAT = {
     "flac": ["-c:a", "flac", "-ar", "44100", "-ac", "2"],
     "m4a": ["-c:a", "aac", "-b:a", "128K", "-ar", "44100", "-ac", "2"],
     "aac": ["-c:a", "aac", "-b:a", "128K", "-ar", "44100", "-ac", "2"],
@@ -25,7 +25,7 @@ AUDIO_DEFAULT_PARAMS_BY_EXTENSION = {
     "opus": ["-c:a", "libopus", "-b:a", "128K", "-ar", "48000", "-ac", "2"],
     "ac3": ["-c:a", "ac3", "-b:a", "128K", "-ar", "44100", "-ac", "2"],
 }
-AUDIO_CODEC_TO_EXTENSION = {
+AUDIO_CODEC_TO_FORMAT = {
     "aac": "m4a",
     "ac3": "ac3",
     "flac": "flac",
@@ -34,8 +34,8 @@ AUDIO_CODEC_TO_EXTENSION = {
     "vorbis": "ogg",
 }
 
-AUDIO_DEFAULT_EXTENSION = "mp3"
-AUDIO_MATCH_EXTENSION = "MATCH"
+AUDIO_DEFAULT_FORMAT = "mp3"
+AUDIO_MATCH_FORMAT = "MATCH"
 AUDIO_INTERMEDIATE_PARAMS = ["-c:a", "pcm_s16le", "-ac", "1", "-ar", "16000"]
 AUDIO_DEFAULT_WAV_FRAMES_CHUNK = 8000
 SWEARS_FILENAME_DEFAULT = 'swears.txt'
@@ -163,10 +163,11 @@ def GetCodecs(local_filename, debug=False):
 #################################################################################
 class Plugger(object):
     debug = False
-    inputAudioFileSpec = ""
+    inputFileSpec = ""
     inputCodecs = {}
-    outputAudioFileSpec = ""
-    outputAudioFileExt = ""
+    outputFileSpec = ""
+    outputAudioFileFormat = ""
+    outputVideoFileFormat = ""
     tmpWavFileSpec = ""
     tmpDownloadedFileSpec = ""
     swearsFileSpec = ""
@@ -183,9 +184,9 @@ class Plugger(object):
     ######## init #################################################################
     def __init__(
         self,
-        iAudioFileSpec,
-        oAudioFileSpec,
-        oAudioFileExt,
+        iFileSpec,
+        oFileSpec,
+        oAudioFileFormat,
         iSwearsFileSpec,
         mPath,
         aParams=None,
@@ -207,71 +208,84 @@ class Plugger(object):
                 mPath,
             )
 
-        # determine input audio file name, or download and save audio file
-        if (iAudioFileSpec is not None) and os.path.isfile(iAudioFileSpec):
-            self.inputAudioFileSpec = iAudioFileSpec
-        elif iAudioFileSpec.lower().startswith("http"):
-            self.tmpDownloadedFileSpec = DownloadToFile(iAudioFileSpec)
+        # determine input file name, or download and save file
+        if (iFileSpec is not None) and os.path.isfile(iFileSpec):
+            self.inputFileSpec = iFileSpec
+        elif iFileSpec.lower().startswith("http"):
+            self.tmpDownloadedFileSpec = DownloadToFile(iFileSpec)
             if (self.tmpDownloadedFileSpec is not None) and os.path.isfile(self.tmpDownloadedFileSpec):
-                self.inputAudioFileSpec = self.tmpDownloadedFileSpec
+                self.inputFileSpec = self.tmpDownloadedFileSpec
             else:
-                raise IOError(errno.ENOENT, os.strerror(errno.ENOENT), iAudioFileSpec)
+                raise IOError(errno.ENOENT, os.strerror(errno.ENOENT), iFileSpec)
         else:
-            raise IOError(errno.ENOENT, os.strerror(errno.ENOENT), iAudioFileSpec)
+            raise IOError(errno.ENOENT, os.strerror(errno.ENOENT), iFileSpec)
 
         # input file should exist locally by now
-        if os.path.isfile(self.inputAudioFileSpec):
-            inParts = os.path.splitext(self.inputAudioFileSpec)
-            self.inputCodecs = GetCodecs(self.inputAudioFileSpec)
-            formatExt = next(
-                iter([x for x in self.inputCodecs.get('format', None) if x in AUDIO_DEFAULT_PARAMS_BY_EXTENSION]), None
+        if os.path.isfile(self.inputFileSpec):
+            inParts = os.path.splitext(self.inputFileSpec)
+            self.inputCodecs = GetCodecs(self.inputFileSpec)
+            inputFormat = next(
+                iter([x for x in self.inputCodecs.get('format', None) if x in AUDIO_DEFAULT_PARAMS_BY_FORMAT]), None
+            )
+            outputVideoFileFormat = (
+                inParts[1] if len(mmguero.GetIterable(self.inputCodecs.get('video', []))) > 0 else ''
             )
         else:
-            raise IOError(errno.ENOENT, os.strerror(errno.ENOENT), self.inputAudioFileSpec)
+            raise IOError(errno.ENOENT, os.strerror(errno.ENOENT), self.inputFileSpec)
 
-        # determine output audio file name (either specified or based on input filename)
-        self.outputAudioFileSpec = oAudioFileSpec if oAudioFileSpec else inParts[0] + "_clean"
-        if self.outputAudioFileSpec:
-            outParts = os.path.splitext(self.outputAudioFileSpec)
-            if not oAudioFileExt:
-                oAudioFileExt = outParts[1]
+        # determine output file name (either specified or based on input filename)
+        self.outputFileSpec = oFileSpec if oFileSpec else inParts[0] + "_clean"
+        if self.outputFileSpec:
+            outParts = os.path.splitext(self.outputFileSpec)
+            if not oAudioFileFormat:
+                oAudioFileFormat = outParts[1]
 
-        if str(oAudioFileExt).upper() == AUDIO_MATCH_EXTENSION:
-            # output extension not specified, base on input filename matching extension (or codec)
-            if inParts[1] in AUDIO_DEFAULT_PARAMS_BY_EXTENSION:
-                self.outputAudioFileSpec = self.outputAudioFileSpec + inParts[1]
-            elif str(formatExt).lower() in AUDIO_DEFAULT_PARAMS_BY_EXTENSION:
-                self.outputAudioFileSpec = self.outputAudioFileSpec + '.' + formatExt.lower()
+        if str(oAudioFileFormat).upper() == AUDIO_MATCH_FORMAT:
+            # output format not specified, base on input filename matching extension (or codec)
+            if inParts[1] in AUDIO_DEFAULT_PARAMS_BY_FORMAT:
+                self.outputFileSpec = self.outputFileSpec + inParts[1]
+            elif str(inputFormat).lower() in AUDIO_DEFAULT_PARAMS_BY_FORMAT:
+                self.outputFileSpec = self.outputFileSpec + '.' + inputFormat.lower()
             else:
                 for codec in mmguero.GetIterable(self.inputCodecs.get('audio', [])):
-                    if codec.lower() in AUDIO_CODEC_TO_EXTENSION:
-                        self.outputAudioFileSpec = (
-                            self.outputAudioFileSpec + '.' + AUDIO_CODEC_TO_EXTENSION[codec.lower()]
-                        )
+                    if codec.lower() in AUDIO_CODEC_TO_FORMAT:
+                        self.outputFileSpec = self.outputFileSpec + '.' + AUDIO_CODEC_TO_FORMAT[codec.lower()]
                         break
 
-        elif oAudioFileExt:
-            # output filename not specified, base on input filename with specified extension
-            self.outputAudioFileSpec = self.outputAudioFileSpec + '.' + oAudioFileExt.lower().lstrip('.')
+        elif oAudioFileFormat:
+            # output filename not specified, base on input filename with specified format
+            self.outputFileSpec = self.outputFileSpec + '.' + oAudioFileFormat.lower().lstrip('.')
 
         else:
-            # can't determine what output audio file extension should be
-            raise ValueError("Output audio file extension unspecified")
+            # can't determine what output file audio format should be
+            raise ValueError("Output file audio format unspecified")
 
-        # determine output audio file extension if it's not already obvious
-        outParts = os.path.splitext(self.outputAudioFileSpec)
-        self.outputAudioFileExt = outParts[1].lower().lstrip('.')
+        # determine output file extension if it's not already obvious
+        outParts = os.path.splitext(self.outputFileSpec)
+        self.outputAudioFileFormat = outParts[1].lower().lstrip('.')
 
-        if (len(self.outputAudioFileExt) == 0) or (
-            (not aParams) and (self.outputAudioFileExt not in AUDIO_DEFAULT_PARAMS_BY_EXTENSION)
+        if (not self.outputAudioFileFormat) or (
+            (not aParams) and (self.outputAudioFileFormat not in AUDIO_DEFAULT_PARAMS_BY_FORMAT)
         ):
-            raise ValueError("Output audio file extension unspecified or unsupported")
+            raise ValueError("Output file audio format unspecified or unsupported")
+        elif not aParams:
+            # we're using ffmpeg encoding params based on output file format
+            self.aParams = AUDIO_DEFAULT_PARAMS_BY_FORMAT[self.outputAudioFileFormat]
+        else:
+            # they specified custom ffmpeg encoding params
+            self.aParams = aParams
+            if self.aParams.startswith("base64:"):
+                self.aParams = base64.b64decode(self.aParams[7:]).decode("utf-8").split(' ')
+
+        # if we're actually just replacing the audio stream(s) inside a video file, the actual output file is still a video file
+        if outputVideoFileFormat:
+            self.outputFileSpec = outParts[0] + outputVideoFileFormat
 
         # if output file already exists, remove as we'll be overwriting it anyway
-        if os.path.isfile(self.outputAudioFileSpec):
+        if os.path.isfile(self.outputFileSpec):
             if self.debug:
-                mmguero.eprint(f'Removing existing destination file {self.outputAudioFileSpec}')
-            os.remove(self.outputAudioFileSpec)
+                mmguero.eprint(f'Removing existing destination file {self.outputFileSpec}')
+            os.remove(self.outputFileSpec)
 
         self.tmpWavFileSpec = inParts[0] + ".wav"
 
@@ -290,20 +304,11 @@ class Plugger(object):
             else:
                 self.swearsMap[lineMap[0]] = "*****"
 
-        if (aParams is None) or (len(aParams) == 0):
-            # we're using ffmpeg encoding params based on output audio file extension
-            self.aParams = AUDIO_DEFAULT_PARAMS_BY_EXTENSION[self.outputAudioFileExt]
-        else:
-            # they specified custom ffmpeg encoding params
-            self.aParams = aParams
-            if self.aParams.startswith("base64:"):
-                self.aParams = base64.b64decode(self.aParams[7:]).decode("utf-8").split(' ')
-
         if self.debug:
-            mmguero.eprint(f'Input: {self.inputAudioFileSpec}')
+            mmguero.eprint(f'Input: {self.inputFileSpec}')
             mmguero.eprint(f'Input codec: {self.inputCodecs}')
-            mmguero.eprint(f'Output: {self.outputAudioFileSpec}')
-            mmguero.eprint(f'Output Extension: {self.outputAudioFileExt}')
+            mmguero.eprint(f'Output: {self.outputFileSpec}')
+            mmguero.eprint(f'Output audio format: {self.outputAudioFileFormat}')
             mmguero.eprint(f'Encode parameters: {self.aParams}')
             mmguero.eprint(f'Profanity file: {self.swearsFileSpec}')
             mmguero.eprint(f'Intermediate audio file: {self.tmpWavFileSpec}')
@@ -317,7 +322,7 @@ class Plugger(object):
         if os.path.isfile(self.tmpWavFileSpec):
             os.remove(self.tmpWavFileSpec)
 
-        # if we downloaded the audio file, remove it as well
+        # if we downloaded the input file, remove it as well
         if os.path.isfile(self.tmpDownloadedFileSpec):
             os.remove(self.tmpDownloadedFileSpec)
 
@@ -328,7 +333,7 @@ class Plugger(object):
             '-nostdin',
             '-y',
             '-i',
-            self.inputAudioFileSpec,
+            self.inputFileSpec,
             '-vn',
             '-sn',
             '-dn',
@@ -341,10 +346,10 @@ class Plugger(object):
             mmguero.eprint(ffmpegResult)
             mmguero.eprint(ffmpegOutput)
             raise ValueError(
-                f"Could not convert {self.inputAudioFileSpec} to {self.tmpWavFileSpec} (16 kHz, mono, s16 PCM WAV)"
+                f"Could not convert {self.inputFileSpec} to {self.tmpWavFileSpec} (16 kHz, mono, s16 PCM WAV)"
             )
 
-        return self.inputAudioFileSpec
+        return self.inputFileSpec
 
     ######## CreateIntermediateWAV ###############################################
     def RecognizeSpeech(self):
@@ -402,38 +407,57 @@ class Plugger(object):
 
     ######## EncodeCleanAudio ####################################################
     def EncodeCleanAudio(self):
-        if (self.forceDespiteTag is True) or (GetMonkeyplugTagged(self.inputAudioFileSpec, debug=self.debug) is False):
+        if (self.forceDespiteTag is True) or (GetMonkeyplugTagged(self.inputFileSpec, debug=self.debug) is False):
             self.CreateCleanMuteList()
 
             if len(self.muteTimeList) > 0:
                 audioArgs = ['-af', ",".join(self.muteTimeList)]
             else:
                 audioArgs = []
-            ffmpegCmd = [
-                'ffmpeg',
-                '-nostdin',
-                '-y',
-                '-i',
-                self.inputAudioFileSpec,
-                '-vn',
-                '-sn',
-                '-dn',
-                audioArgs,
-                self.aParams,
-                self.outputAudioFileSpec,
-            ]
+
+            if False and len(mmguero.GetIterable(self.inputCodecs.get('video', []))) > 0:
+                # todo: replace existing audio stream in video file with -copy
+                ffmpegCmd = [
+                    'ffmpeg',
+                    '-nostdin',
+                    '-y',
+                    '-i',
+                    self.inputFileSpec,
+                    '-v:c',
+                    '-copy',
+                    '-sn',
+                    '-dn',
+                    audioArgs,
+                    self.aParams,
+                    self.outputFileSpec,
+                ]
+
+            else:
+                ffmpegCmd = [
+                    'ffmpeg',
+                    '-nostdin',
+                    '-y',
+                    '-i',
+                    self.inputFileSpec,
+                    '-vn',
+                    '-sn',
+                    '-dn',
+                    audioArgs,
+                    self.aParams,
+                    self.outputFileSpec,
+                ]
             ffmpegResult, ffmpegOutput = mmguero.RunProcess(ffmpegCmd, stdout=True, stderr=True, debug=self.debug)
             if (ffmpegResult != 0) or (not os.path.isfile(self.tmpWavFileSpec)):
                 mmguero.eprint(ffmpegCmd)
                 mmguero.eprint(ffmpegResult)
                 mmguero.eprint(ffmpegOutput)
-                raise ValueError(f"Could not process {self.inputAudioFileSpec}")
+                raise ValueError(f"Could not process {self.inputFileSpec}")
 
-            SetMonkeyplugTag(self.outputAudioFileSpec, debug=self.debug)
-            return self.outputAudioFileSpec
+            SetMonkeyplugTag(self.outputFileSpec, debug=self.debug)
+            return self.outputFileSpec
 
         else:
-            return self.inputAudioFileSpec
+            return self.inputFileSpec
 
 
 #################################################################################
@@ -465,7 +489,7 @@ def RunMonkeyPlug():
         default=None,
         required=True,
         metavar="<string>",
-        help="Input audio file (or URL)",
+        help="Input file (or URL)",
     )
     parser.add_argument(
         "-o",
@@ -475,7 +499,7 @@ def RunMonkeyPlug():
         default=None,
         required=False,
         metavar="<string>",
-        help="Output audio file",
+        help="Output file",
     )
     parser.add_argument(
         "-w",
@@ -487,19 +511,19 @@ def RunMonkeyPlug():
     parser.add_argument(
         "-a",
         "--audio-params",
-        help=f"Audio parameters for ffmpeg (default depends on output audio file type\")",
+        help=f"Audio parameters for ffmpeg (default depends on output audio codec\")",
         dest="aParams",
         default=None,
     )
     parser.add_argument(
-        "-x",
-        "--extension",
-        dest="outputExt",
+        "-f",
+        "--format",
+        dest="outputFormat",
         type=str,
-        default=AUDIO_MATCH_EXTENSION,
+        default=AUDIO_MATCH_FORMAT,
         required=False,
         metavar="<string>",
-        help=f"Output audio file extension (default: extension of --output, or \"{AUDIO_MATCH_EXTENSION}\")",
+        help=f"Output file format (default: inferred from extension of --output, or \"{AUDIO_MATCH_FORMAT}\")",
     )
     parser.add_argument(
         "-m",
@@ -511,7 +535,6 @@ def RunMonkeyPlug():
         help="Vosk model path (default: \"model\")",
     )
     parser.add_argument(
-        "-f",
         "--frames",
         dest="readFramesChunk",
         metavar="<int>",
@@ -549,7 +572,7 @@ def RunMonkeyPlug():
         Plugger(
             args.input,
             args.output,
-            args.outputExt,
+            args.outputFormat,
             args.swears,
             args.modelPath,
             aParams=args.aParams,
