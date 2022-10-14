@@ -19,8 +19,9 @@ from urllib.parse import urlparse
 AUDIO_DEFAULT_PARAMS = {
     "flac": ["-c:a", "flac", "-ar", "44100", "-ac", "2"],
     "m4a": ["-c:a", "aac", "-b:a", "128K", "-ar", "44100", "-ac", "2"],
+    "aac": ["-c:a", "aac", "-b:a", "128K", "-ar", "44100", "-ac", "2"],
     "mp3": ["-c:a", "libmp3lame", "-b:a", "128K", "-ar", "44100", "-ac", "2"],
-    "ogg": ["-c:a", "libvorbis", "-qscale:a", "4", "-ar", "44100", "-ac", "2"],
+    "ogg": ["-c:a", "libvorbis", "-qscale:a", "5", "-ar", "44100", "-ac", "2"],
     "opus": ["-c:a", "libopus", "-b:a", "128K", "-ar", "48000", "-ac", "2"],
     "ac3": ["-c:a", "ac3", "-b:a", "128K", "-ar", "44100", "-ac", "2"],
 }
@@ -250,7 +251,11 @@ class Plugger(object):
 
         # if output file already exists, remove as we'll be overwriting it anyway
         if os.path.isfile(self.outputAudioFileSpec):
+            if self.debug:
+                mmguero.eprint(f'Removing existing destination file {self.outputAudioFileSpec}')
             os.remove(self.outputAudioFileSpec)
+
+        self.tmpWavFileSpec = inParts[0] + ".wav"
 
         # load the swears file (not actually mapping right now, but who knows, speech synthesis maybe someday?)
         if (iSwearsFileSpec is not None) and os.path.isfile(iSwearsFileSpec):
@@ -300,13 +305,14 @@ class Plugger(object):
 
     ######## CreateIntermediateWAV ###############################################
     def CreateIntermediateWAV(self):
-        audioFileParts = os.path.splitext(self.inputAudioFileSpec)
-        self.tmpWavFileSpec = audioFileParts[0] + ".wav"
         ffmpegCmd = [
             'ffmpeg',
             '-y',
             '-i',
             self.inputAudioFileSpec,
+            '-vn',
+            '-sn',
+            '-dn',
             AUDIO_INTERMEDIATE_PARAMS,
             self.tmpWavFileSpec,
         ]
@@ -389,6 +395,9 @@ class Plugger(object):
                 '-y',
                 '-i',
                 self.inputAudioFileSpec,
+                '-vn',
+                '-sn',
+                '-dn',
                 audioArgs,
                 self.aParams,
                 self.outputAudioFileSpec,
