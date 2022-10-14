@@ -428,7 +428,7 @@ class Plugger(object):
                     '-y',
                     '-i',
                     self.inputFileSpec,
-                    '-v:c',
+                    '-c:v',
                     'copy',
                     '-sn',
                     '-dn',
