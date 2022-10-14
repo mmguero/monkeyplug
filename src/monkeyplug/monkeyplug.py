@@ -16,7 +16,7 @@ import wave
 from urllib.parse import urlparse
 
 ###################################################################################################
-AUDIO_DEFAULT_PARAMS = {
+AUDIO_DEFAULT_PARAMS_BY_EXTENSION = {
     "flac": ["-c:a", "flac", "-ar", "44100", "-ac", "2"],
     "m4a": ["-c:a", "aac", "-b:a", "128K", "-ar", "44100", "-ac", "2"],
     "aac": ["-c:a", "aac", "-b:a", "128K", "-ar", "44100", "-ac", "2"],
@@ -25,6 +25,15 @@ AUDIO_DEFAULT_PARAMS = {
     "opus": ["-c:a", "libopus", "-b:a", "128K", "-ar", "48000", "-ac", "2"],
     "ac3": ["-c:a", "ac3", "-b:a", "128K", "-ar", "44100", "-ac", "2"],
 }
+AUDIO_CODEC_TO_EXTENSION = {
+    "aac": "m4a",
+    "ac3": "ac3",
+    "flac": "flac",
+    "mp3": "mp3",
+    "opus": "opus",
+    "vorbis": "ogg",
+}
+
 AUDIO_DEFAULT_EXTENSION = "mp3"
 AUDIO_MATCH_EXTENSION = "MATCH"
 AUDIO_INTERMEDIATE_PARAMS = ["-c:a", "pcm_s16le", "-ac", "1", "-ar", "16000"]
@@ -139,6 +148,9 @@ def GetCodecs(local_filename, debug=False):
                             result[cType].add(cValue)
                         else:
                             result[cType] = set([cValue])
+            result['format'] = mmguero.DeepGet(ffprobeOutput, ['format', 'format_name'])
+            if isinstance(result['format'], str):
+                result['format'] = result['format'].split(',')
         else:
             mmguero.eprint(ffprobeCmd)
             mmguero.eprint(ffprobeResult)
@@ -211,41 +223,47 @@ class Plugger(object):
         if os.path.isfile(self.inputAudioFileSpec):
             inParts = os.path.splitext(self.inputAudioFileSpec)
             self.inputCodecs = GetCodecs(self.inputAudioFileSpec)
+            formatExt = next(
+                iter([x for x in self.inputCodecs.get('format', None) if x in AUDIO_DEFAULT_PARAMS_BY_EXTENSION]), None
+            )
         else:
             raise IOError(errno.ENOENT, os.strerror(errno.ENOENT), self.inputAudioFileSpec)
 
         # determine output audio file name (either specified or based on input filename)
-        if (oAudioFileSpec is not None) and (len(oAudioFileSpec) > 0):
-            # output filename was specified
-            self.outputAudioFileSpec = oAudioFileSpec
-        else:
-            if (oAudioFileExt is not None) and (oAudioFileExt.upper() == AUDIO_MATCH_EXTENSION):
-                # output filename not specified, base on input filename matching extension
-                self.outputAudioFileSpec = inParts[0] + "_clean" + inParts[1]
-            elif (oAudioFileExt is not None) and (len(oAudioFileExt) > 0):
-                # output filename not specified, base on input filename with specified extension
-                self.outputAudioFileSpec = inParts[0] + "_clean." + oAudioFileExt.lower().lstrip('.')
+        self.outputAudioFileSpec = oAudioFileSpec if oAudioFileSpec else inParts[0] + "_clean"
+        if self.outputAudioFileSpec:
+            outParts = os.path.splitext(self.outputAudioFileSpec)
+            if not oAudioFileExt:
+                oAudioFileExt = outParts[1]
+
+        if str(oAudioFileExt).upper() == AUDIO_MATCH_EXTENSION:
+            # output extension not specified, base on input filename matching extension (or codec)
+            if inParts[1] in AUDIO_DEFAULT_PARAMS_BY_EXTENSION:
+                self.outputAudioFileSpec = self.outputAudioFileSpec + inParts[1]
+            elif str(formatExt).lower() in AUDIO_DEFAULT_PARAMS_BY_EXTENSION:
+                self.outputAudioFileSpec = self.outputAudioFileSpec + '.' + formatExt.lower()
             else:
-                # can't determine what output audio file extension should be
-                raise ValueError("Output audio file extension unspecified")
+                for codec in mmguero.GetIterable(self.inputCodecs.get('audio', [])):
+                    if codec.lower() in AUDIO_CODEC_TO_EXTENSION:
+                        self.outputAudioFileSpec = (
+                            self.outputAudioFileSpec + '.' + AUDIO_CODEC_TO_EXTENSION[codec.lower()]
+                        )
+                        break
+
+        elif oAudioFileExt:
+            # output filename not specified, base on input filename with specified extension
+            self.outputAudioFileSpec = self.outputAudioFileSpec + '.' + oAudioFileExt.lower().lstrip('.')
+
+        else:
+            # can't determine what output audio file extension should be
+            raise ValueError("Output audio file extension unspecified")
 
         # determine output audio file extension if it's not already obvious
         outParts = os.path.splitext(self.outputAudioFileSpec)
         self.outputAudioFileExt = outParts[1].lower().lstrip('.')
 
-        if len(self.outputAudioFileExt) == 0:
-            # we don't know the output extension yet (not specified as part of output audio file)
-            if (oAudioFileExt is not None) and (oAudioFileExt.upper() == AUDIO_MATCH_EXTENSION):
-                self.outputAudioFileSpec = self.outputAudioFileSpec + inParts[1]
-            elif (oAudioFileExt is not None) and (len(oAudioFileExt) > 0):
-                self.outputAudioFileSpec = self.outputAudioFileSpec + '.' + oAudioFileExt.lower().lstrip('.')
-            else:
-                raise ValueError("Output audio file extension unspecified")
-            outParts = os.path.splitext(self.outputAudioFileSpec)
-            self.outputAudioFileExt = outParts[1].lower().lstrip('.')
-
         if (len(self.outputAudioFileExt) == 0) or (
-            ((aParams is None) or (len(aParams) == 0)) and (self.outputAudioFileExt not in AUDIO_DEFAULT_PARAMS)
+            (not aParams) and (self.outputAudioFileExt not in AUDIO_DEFAULT_PARAMS_BY_EXTENSION)
         ):
             raise ValueError("Output audio file extension unspecified or unsupported")
 
@@ -274,7 +292,7 @@ class Plugger(object):
 
         if (aParams is None) or (len(aParams) == 0):
             # we're using ffmpeg encoding params based on output audio file extension
-            self.aParams = AUDIO_DEFAULT_PARAMS[self.outputAudioFileExt]
+            self.aParams = AUDIO_DEFAULT_PARAMS_BY_EXTENSION[self.outputAudioFileExt]
         else:
             # they specified custom ffmpeg encoding params
             self.aParams = aParams
@@ -307,6 +325,7 @@ class Plugger(object):
     def CreateIntermediateWAV(self):
         ffmpegCmd = [
             'ffmpeg',
+            '-nostdin',
             '-y',
             '-i',
             self.inputAudioFileSpec,
@@ -392,6 +411,7 @@ class Plugger(object):
                 audioArgs = []
             ffmpegCmd = [
                 'ffmpeg',
+                '-nostdin',
                 '-y',
                 '-i',
                 self.inputAudioFileSpec,
