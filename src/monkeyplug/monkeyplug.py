@@ -152,7 +152,7 @@ def GetCodecs(local_filename, debug=False):
             if isinstance(result['format'], str):
                 result['format'] = result['format'].split(',')
         else:
-            mmguero.eprint(ffprobeCmd)
+            mmguero.eprint(' '.join(mmguero.Flatten(ffprobeCmd)))
             mmguero.eprint(ffprobeResult)
             mmguero.eprint(ffprobeOutput)
             raise ValueError(f"Could not analyze {local_filename}")
@@ -227,9 +227,6 @@ class Plugger(object):
             inputFormat = next(
                 iter([x for x in self.inputCodecs.get('format', None) if x in AUDIO_DEFAULT_PARAMS_BY_FORMAT]), None
             )
-            outputVideoFileFormat = (
-                inParts[1] if len(mmguero.GetIterable(self.inputCodecs.get('video', []))) > 0 else ''
-            )
         else:
             raise IOError(errno.ENOENT, os.strerror(errno.ENOENT), self.inputFileSpec)
 
@@ -278,8 +275,16 @@ class Plugger(object):
                 self.aParams = base64.b64decode(self.aParams[7:]).decode("utf-8").split(' ')
 
         # if we're actually just replacing the audio stream(s) inside a video file, the actual output file is still a video file
-        if outputVideoFileFormat:
-            self.outputFileSpec = outParts[0] + outputVideoFileFormat
+        self.outputVideoFileFormat = (
+            inParts[1]
+            if (
+                (len(mmguero.GetIterable(self.inputCodecs.get('video', []))) > 0)
+                and (str(oAudioFileFormat).upper() == AUDIO_MATCH_FORMAT)
+            )
+            else ''
+        )
+        if self.outputVideoFileFormat:
+            self.outputFileSpec = outParts[0] + self.outputVideoFileFormat
 
         # if output file already exists, remove as we'll be overwriting it anyway
         if os.path.isfile(self.outputFileSpec):
@@ -342,7 +347,7 @@ class Plugger(object):
         ]
         ffmpegResult, ffmpegOutput = mmguero.RunProcess(ffmpegCmd, stdout=True, stderr=True, debug=self.debug)
         if (ffmpegResult != 0) or (not os.path.isfile(self.tmpWavFileSpec)):
-            mmguero.eprint(ffmpegCmd)
+            mmguero.eprint(' '.join(mmguero.Flatten(ffmpegCmd)))
             mmguero.eprint(ffmpegResult)
             mmguero.eprint(ffmpegOutput)
             raise ValueError(
@@ -415,8 +420,8 @@ class Plugger(object):
             else:
                 audioArgs = []
 
-            if False and len(mmguero.GetIterable(self.inputCodecs.get('video', []))) > 0:
-                # todo: replace existing audio stream in video file with -copy
+            if self.outputVideoFileFormat:
+                # replace existing audio stream in video file with -copy
                 ffmpegCmd = [
                     'ffmpeg',
                     '-nostdin',
@@ -424,7 +429,7 @@ class Plugger(object):
                     '-i',
                     self.inputFileSpec,
                     '-v:c',
-                    '-copy',
+                    'copy',
                     '-sn',
                     '-dn',
                     audioArgs,
@@ -448,7 +453,7 @@ class Plugger(object):
                 ]
             ffmpegResult, ffmpegOutput = mmguero.RunProcess(ffmpegCmd, stdout=True, stderr=True, debug=self.debug)
             if (ffmpegResult != 0) or (not os.path.isfile(self.tmpWavFileSpec)):
-                mmguero.eprint(ffmpegCmd)
+                mmguero.eprint(' '.join(mmguero.Flatten(ffmpegCmd)))
                 mmguero.eprint(ffmpegResult)
                 mmguero.eprint(ffmpegOutput)
                 raise ValueError(f"Could not process {self.inputFileSpec}")
