@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 
 import argparse
-import delegator
 import errno
 import json
 import mmguero

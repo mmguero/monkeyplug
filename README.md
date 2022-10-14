@@ -89,12 +89,3 @@ If you'd like to help improve monkeyplug, pull requests will be welcomed!
 ## License
 
 This project is licensed under the BSD 3-Clause License - see the [LICENSE](LICENSE) file for details.
-
-## Acknowledgments
-
-Thanks to:
-
-* the developers of [FFmpeg](https://www.ffmpeg.org/about.html)
-* [Mattias Wadman](https://github.com/wader) for his [ffmpeg](https://github.com/wader/static-ffmpeg) image
-* [delegator.py](https://github.com/kennethreitz/delegator.py) developer Kenneth Reitz and contributors
-* [Vosk](https://alphacephei.com/vosk/) and [vosk-api](https://github.com/alphacep/vosk-api) developers and contributors
