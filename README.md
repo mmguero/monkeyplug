@@ -11,6 +11,8 @@
 
 You can then use your favorite media player to play the cleaned audio file.
 
+If provided a video file for input, **monkeyplug** will attempt to process the audio stream from the file and remultiplex it, copying the original video stream. 
+
 **monkeyplug** is part of a family of projects with similar goals:
 
 * 📼 [cleanvid](https://github.com/mmguero/cleanvid) for video files
