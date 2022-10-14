@@ -39,7 +39,7 @@ python3 -m pip install -U 'git+https://github.com/mmguero/monkeyplug'
 * [FFmpeg](https://www.ffmpeg.org)
 * Python 3
     - [mutagen](https://github.com/quodlibet/mutagen)
-    - [vosk-api](https://github.com/alphacep/vosk-api) Python bindings
+    - [vosk-api](https://github.com/alphacep/vosk-api)
 + A Vosk-API [compatible model](https://alphacephei.com/vosk/models) in a subdirectory named `model` in the same directory as `monkeyplug.py`, or in a custom directory location indicated with the `--model` runtime option or the `VOSK_MODEL` environment variable
 
 To install FFmpeg, use your operating system's package manager or install binaries from [ffmpeg.org](https://www.ffmpeg.org/download.html). The Python dependencies will be installed automatically if you are using `pip` to install monkeyplug.
