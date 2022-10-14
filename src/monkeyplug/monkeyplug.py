@@ -380,14 +380,21 @@ class Plugger(object):
                 if rec.AcceptWaveform(data):
                     res = json.loads(rec.Result())
                     if "result" in res:
-                        self.wordList.extend(res["result"])
-
+                        self.wordList.extend(
+                            [
+                                dict(r, **{'scrub': mmguero.DeepGet(r, ["word"]) in self.swearsMap})
+                                for r in res["result"]
+                            ]
+                        )
             res = json.loads(rec.FinalResult())
             if "result" in res:
-                self.wordList.extend(res["result"])
+                self.wordList.extend(
+                    [dict(r, **{'scrub': mmguero.DeepGet(r, ["word"]) in self.swearsMap}) for r in res["result"]]
+                )
 
             if self.debug:
                 mmguero.eprint(json.dumps(self.wordList))
+
             if self.outputJson:
                 with open(self.outputJson, "w") as f:
                     f.write(json.dumps(self.wordList))
@@ -399,7 +406,7 @@ class Plugger(object):
         self.CreateIntermediateWAV()
         self.RecognizeSpeech()
 
-        self.naughtyWordList = [word for word in self.wordList if (word["word"].lower() in self.swearsMap)]
+        self.naughtyWordList = [word for word in self.wordList if word["scrub"] is True]
         if self.debug:
             mmguero.eprint(self.naughtyWordList)
 
