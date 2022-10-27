@@ -71,6 +71,12 @@ options:
   -m <string>, --model <string>
                         Vosk model path (default: "model")
   --frames <int>        WAV frame chunk (default: 8000)
+  --pad-milliseconds <int>
+                        Milliseconds to pad on either side of muted segments (default: 0)
+  --pad-milliseconds-pre <int>
+                        Milliseconds to pad before muted segments (default: 0)
+  --pad-milliseconds-post <int>
+                        Milliseconds to pad after muted segments (default: 0)
   --force [true|false]  Process file despite existence of embedded tag
 ```
 

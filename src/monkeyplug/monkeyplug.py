@@ -177,6 +177,8 @@ class Plugger(object):
     muteTimeList = []
     modelPath = ""
     wavReadFramesChunk = AUDIO_DEFAULT_WAV_FRAMES_CHUNK
+    padSecPre = 0.0
+    padSecPost = 0.0
     forceDespiteTag = False
     aParams = None
     tags = None
@@ -192,10 +194,14 @@ class Plugger(object):
         outputJson,
         aParams=None,
         wChunk=AUDIO_DEFAULT_WAV_FRAMES_CHUNK,
+        padMsecPre=0,
+        padMsecPost=0,
         force=False,
         dbug=False,
     ):
         self.wavReadFramesChunk = wChunk
+        self.padSecPre = padMsecPre / 1000.0
+        self.padSecPost = padMsecPost / 1000.0
         self.forceDespiteTag = force
         self.debug = dbug
         self.outputJson = outputJson
@@ -411,9 +417,9 @@ class Plugger(object):
 
         self.muteTimeList = [
             "volume=enable='between(t,"
-            + format(word["start"], ".3f")
+            + format(word["start"] - self.padSecPre, ".3f")
             + ","
-            + format(word["end"], ".3f")
+            + format(word["end"] + self.padSecPost, ".3f")
             + ")':volume=0"
             for word in self.naughtyWordList
         ]
@@ -569,6 +575,30 @@ def RunMonkeyPlug():
         help=f"WAV frame chunk (default: {AUDIO_DEFAULT_WAV_FRAMES_CHUNK})",
     )
     parser.add_argument(
+        "--pad-milliseconds",
+        dest="padMsec",
+        metavar="<int>",
+        type=int,
+        default=0,
+        help=f"Milliseconds to pad on either side of muted segments",
+    )
+    parser.add_argument(
+        "--pad-milliseconds-pre",
+        dest="padMsecPre",
+        metavar="<int>",
+        type=int,
+        default=0,
+        help=f"Milliseconds to pad before muted segments",
+    )
+    parser.add_argument(
+        "--pad-milliseconds-post",
+        dest="padMsecPost",
+        metavar="<int>",
+        type=int,
+        default=0,
+        help=f"Milliseconds to pad after muted segments",
+    )
+    parser.add_argument(
         "--force",
         dest="forceDespiteTag",
         type=mmguero.str2bool,
@@ -604,6 +634,8 @@ def RunMonkeyPlug():
             args.outputJson,
             aParams=args.aParams,
             wChunk=args.readFramesChunk,
+            padMsecPre=args.padMsecPre if args.padMsecPre > 0 else args.padMsec,
+            padMsecPost=args.padMsecPost if args.padMsecPost > 0 else args.padMsec,
             force=args.forceDespiteTag,
             dbug=args.debug,
         ).EncodeCleanAudio()
