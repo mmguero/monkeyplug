@@ -1,4 +1,3 @@
----
 name: monkeyplug-build-push-ghcr
 
 on:
@@ -7,51 +6,85 @@ on:
       - 'main'
   workflow_dispatch:
   repository_dispatch:
-  schedule:
-    - cron: '0 12 15 * *'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/monkeyplug
+  IMAGE_PLATFORM: linux/amd64
+  REPO_CONTEXT: .
+  REPO_CONTAINERFILE: ./docker/Dockerfile
 
 jobs:
-
-  build-small-image:
-    name: Call Docker Build for small image
-    uses: mmguero-dev/docker-build-workflow/.github/workflows/reusable-docker-build.yaml@main
+  buildah:
+    runs-on: ubuntu-latest
     permissions:
-      contents: read
       actions: write
       packages: write
-      pull-requests: write
-    with:
-      context: .
-      file: ./docker/Dockerfile
-      cancel-previous-runs: true
-      dockerhub-enable: false
-      ghcr-enable: true
-      image-names: |
-        ghcr.io/${{ github.repository_owner }}/monkeyplug
-      tag-rules: |
-        type=raw,value=small,enable={{is_default_branch}}
-        type=raw,value=stable-small-{{date 'YYYYMMDDHHmmss'}},enable={{is_default_branch}}
-      platforms: linux/amd64
-
-  build-large-image:
-    name: Call Docker Build for large image
-    uses: mmguero-dev/docker-build-workflow/.github/workflows/reusable-docker-build.yaml@main
-    permissions:
       contents: read
-      actions: write
-      packages: write
-      pull-requests: write
-    with:
-      context: .
-      file: ./docker/Dockerfile
-      cancel-previous-runs: false
-      dockerhub-enable: false
-      ghcr-enable: true
-      build-args: |
-        VOSK_MODEL_URL=http://alphacephei.com/vosk/models/vosk-model-en-us-0.22.zip
-      image-names: |
-        ghcr.io/${{ github.repository_owner }}/monkeyplug
-      tag-rules: |
-        type=raw,value=large,enable={{is_default_branch}}
-        type=raw,value=stable-large-{{date 'YYYYMMDDHHmmss'}},enable={{is_default_branch}}
-      platforms: linux/amd64
+    steps:
+      -
+        name: Cancel previous run in progress
+        id: cancel-previous-runs
+        uses: styfle/cancel-workflow-action@0.11.0
+        with:
+          ignore_sha: true
+          all_but_latest: true
+          access_token: ${{ secrets.GITHUB_TOKEN }}
+      -
+        name: Checkout
+        id: repo-checkout
+        uses: actions/checkout@v3
+      -
+        name: Set up QEMU
+        id: setup-qemu
+        uses: docker/setup-qemu-action@v2
+      -
+        name: Log in to registry
+        id: registry-login
+        uses: redhat-actions/podman-login@v1
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      -
+        name: Build small
+        id: build-small-image
+        uses: redhat-actions/buildah-build@v2
+        with:
+          image: ${{ env.IMAGE_NAME }}
+          tags: small
+          context: ${{ env.REPO_CONTEXT }}
+          containerfiles: |
+            ${{ env.REPO_CONTAINERFILE }}
+          platforms: |
+            ${{ env.IMAGE_PLATFORM }}
+      -
+        name: Push small
+        id: push-small-to-ghcr
+        uses: redhat-actions/push-to-registry@v2
+        with:
+          image: ${{ steps.build-small-image.outputs.image }}
+          tags: ${{ steps.build-small-image.outputs.tags }}
+          registry: ${{ env.REGISTRY }}
+      -
+        name: Build large
+        id: build-large-image
+        uses: redhat-actions/buildah-build@v2
+        with:
+          image: ${{ env.IMAGE_NAME }}
+          tags: large
+          context: ${{ env.REPO_CONTEXT }}
+          containerfiles: |
+            ${{ env.REPO_CONTAINERFILE }}
+          build-args: |
+            VOSK_MODEL_URL=http://alphacephei.com/vosk/models/vosk-model-en-us-0.22.zip
+          platforms: |
+            ${{ env.IMAGE_PLATFORM }}
+      -
+        name: Push large
+        id: push-large-to-ghcr
+        uses: redhat-actions/push-to-registry@v2
+        with:
+          image: ${{ steps.build-large-image.outputs.image }}
+          tags: ${{ steps.build-large-image.outputs.tags }}
+          registry: ${{ env.REGISTRY }}
