@@ -65,7 +65,7 @@ for AUDIOFILE in "$@"; do
       # monkeyplug will only process audio files that haven't been cleaned before,
       # based on the contents of embedded metadata tags
       OUTFILE="${AUDIOFILE%.*}_clean.${AUDIOFILE##*.}"
-      ${MONKEYPLUG_BIN} -i "${AUDIOFILE}" -o "${OUTFILE}" -f MATCH --pad-milliseconds-pre 50
+      ${MONKEYPLUG_BIN} -i "${AUDIOFILE}" -o "${OUTFILE%.*}" -f MATCH --pad-milliseconds-pre 50
 
       # if the cleaned audio file exists and is larger than negligible,
       # remove the original file and accept the cleaned one. if the output
