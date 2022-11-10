@@ -8,6 +8,7 @@ import mmguero
 import mutagen
 import os
 import requests
+import shutil
 import sys
 import vosk
 import wave
@@ -477,10 +478,11 @@ class Plugger(object):
                 raise ValueError(f"Could not process {self.inputFileSpec}")
 
             SetMonkeyplugTag(self.outputFileSpec, debug=self.debug)
-            return self.outputFileSpec
 
         else:
-            return self.inputFileSpec
+            shutil.copyfile(self.inputFileSpec, self.outputFileSpec)
+
+        return self.outputFileSpec
 
 
 #################################################################################
