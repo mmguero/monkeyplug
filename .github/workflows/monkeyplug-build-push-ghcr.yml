@@ -32,7 +32,7 @@ jobs:
       tag-rules: |
         type=raw,value=small,enable={{is_default_branch}}
         type=raw,value=stable-small-{{date 'YYYYMMDDHHmmss'}},enable={{is_default_branch}}
-      platforms: linux/amd64
+      platforms: linux/amd64,linux/arm64
 
   build-large-image:
     name: Call Docker Build for large
@@ -55,4 +55,4 @@ jobs:
       tag-rules: |
         type=raw,value=large,enable={{is_default_branch}}
         type=raw,value=stable-large-{{date 'YYYYMMDDHHmmss'}},enable={{is_default_branch}}
-      platforms: linux/amd64
+      platforms: linux/amd64,linux/arm64
