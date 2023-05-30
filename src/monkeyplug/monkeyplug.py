@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import argparse
+import base64
 import errno
 import json
 import mmguero
@@ -16,14 +17,15 @@ import wave
 from urllib.parse import urlparse
 
 ###################################################################################################
+CHANNELS_REPLACER = 'CHANNELS'
 AUDIO_DEFAULT_PARAMS_BY_FORMAT = {
-    "flac": ["-c:a", "flac", "-ar", "44100", "-ac", "2"],
-    "m4a": ["-c:a", "aac", "-b:a", "128K", "-ar", "44100", "-ac", "2"],
-    "aac": ["-c:a", "aac", "-b:a", "128K", "-ar", "44100", "-ac", "2"],
-    "mp3": ["-c:a", "libmp3lame", "-b:a", "128K", "-ar", "44100", "-ac", "2"],
-    "ogg": ["-c:a", "libvorbis", "-qscale:a", "5", "-ar", "44100", "-ac", "2"],
-    "opus": ["-c:a", "libopus", "-b:a", "128K", "-ar", "48000", "-ac", "2"],
-    "ac3": ["-c:a", "ac3", "-b:a", "128K", "-ar", "44100", "-ac", "2"],
+    "flac": ["-c:a", "flac", "-ar", "44100", "-ac", CHANNELS_REPLACER],
+    "m4a": ["-c:a", "aac", "-b:a", "128K", "-ar", "44100", "-ac", CHANNELS_REPLACER],
+    "aac": ["-c:a", "aac", "-b:a", "128K", "-ar", "44100", "-ac", CHANNELS_REPLACER],
+    "mp3": ["-c:a", "libmp3lame", "-b:a", "128K", "-ar", "44100", "-ac", CHANNELS_REPLACER],
+    "ogg": ["-c:a", "libvorbis", "-qscale:a", "5", "-ar", "44100", "-ac", CHANNELS_REPLACER],
+    "opus": ["-c:a", "libopus", "-b:a", "128K", "-ar", "48000", "-ac", CHANNELS_REPLACER],
+    "ac3": ["-c:a", "ac3", "-b:a", "128K", "-ar", "44100", "-ac", CHANNELS_REPLACER],
 }
 AUDIO_CODEC_TO_FORMAT = {
     "aac": "m4a",
@@ -35,6 +37,7 @@ AUDIO_CODEC_TO_FORMAT = {
 }
 
 AUDIO_DEFAULT_FORMAT = "mp3"
+AUDIO_DEFAULT_CHANNELS = 2
 AUDIO_MATCH_FORMAT = "MATCH"
 AUDIO_INTERMEDIATE_PARAMS = ["-c:a", "pcm_s16le", "-ac", "1", "-ar", "16000"]
 AUDIO_DEFAULT_WAV_FRAMES_CHUNK = 8000
@@ -194,6 +197,7 @@ class Plugger(object):
         mPath,
         outputJson,
         aParams=None,
+        aChannels=AUDIO_DEFAULT_CHANNELS,
         wChunk=AUDIO_DEFAULT_WAV_FRAMES_CHUNK,
         padMsecPre=0,
         padMsecPost=0,
@@ -281,7 +285,9 @@ class Plugger(object):
             # they specified custom ffmpeg encoding params
             self.aParams = aParams
             if self.aParams.startswith("base64:"):
-                self.aParams = base64.b64decode(self.aParams[7:]).decode("utf-8").split(' ')
+                self.aParams = base64.b64decode(self.aParams[7:]).decode("utf-8")
+            self.aParams = self.aParams.split(' ')
+        self.aParams = [str(aChannels) if aParam == CHANNELS_REPLACER else aParam for aParam in self.aParams]
 
         # if we're actually just replacing the audio stream(s) inside a video file, the actual output file is still a video file
         self.outputVideoFileFormat = (
@@ -487,6 +493,7 @@ class Plugger(object):
 
 #################################################################################
 
+
 ###################################################################################################
 # RunMonkeyPlug
 def RunMonkeyPlug():
@@ -545,9 +552,18 @@ def RunMonkeyPlug():
     parser.add_argument(
         "-a",
         "--audio-params",
-        help=f"Audio parameters for ffmpeg (default depends on output audio codec\")",
+        help=f"Audio parameters for ffmpeg (default depends on output audio codec)",
         dest="aParams",
         default=None,
+    )
+    parser.add_argument(
+        "-c",
+        "--channels",
+        dest="aChannels",
+        metavar="<int>",
+        type=int,
+        default=AUDIO_DEFAULT_CHANNELS,
+        help=f"Audio output channels (default: {AUDIO_DEFAULT_CHANNELS})",
     )
     parser.add_argument(
         "-f",
@@ -614,7 +630,8 @@ def RunMonkeyPlug():
     try:
         parser.error = parser.exit
         args = parser.parse_args()
-    except SystemExit:
+    except SystemExit as sy:
+        mmguero.eprint(sy)
         parser.print_help()
         exit(2)
 
@@ -635,6 +652,7 @@ def RunMonkeyPlug():
             args.modelPath,
             args.outputJson,
             aParams=args.aParams,
+            aChannels=args.aChannels,
             wChunk=args.readFramesChunk,
             padMsecPre=args.padMsecPre if args.padMsecPre > 0 else args.padMsec,
             padMsecPost=args.padMsecPost if args.padMsecPost > 0 else args.padMsec,
