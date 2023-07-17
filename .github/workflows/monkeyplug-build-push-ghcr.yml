@@ -103,7 +103,7 @@ jobs:
           registry: ${{ env.REGISTRY }}
       -
         name: Push Large
-        id: push-small-to-ghcr
+        id: push-large-to-ghcr
         uses: redhat-actions/push-to-registry@v2
         with:
           image: ${{ steps.build-large-image.outputs.image }}
