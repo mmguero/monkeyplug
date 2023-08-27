@@ -50,6 +50,13 @@ script_name = os.path.basename(__file__)
 script_path = os.path.dirname(os.path.realpath(__file__))
 
 
+# thanks https://docs.python.org/3/library/itertools.html#recipes
+def pairwise(iterable):
+    a, b = tee(iterable)
+    next(b, None)
+    return zip(a, b)
+
+
 ###################################################################################################
 # download to file
 def DownloadToFile(url, local_filename=None, chunk_bytes=4096, debug=False):
@@ -419,17 +426,43 @@ class Plugger(object):
         self.RecognizeSpeech()
 
         self.naughtyWordList = [word for word in self.wordList if word["scrub"] is True]
+        if len(self.naughtyWordList) > 0:
+            # append a dummy word at the very end so that pairwise can peek then ignore it
+            self.naughtyWordList.extend(
+                [
+                    {
+                        "conf": 1,
+                        "end": self.naughtyWordList[-1]["end"] + 2.0,
+                        "start": self.naughtyWordList[-1]["end"] + 1.0,
+                        "word": "mothaflippin",
+                        "scrub": True,
+                    }
+                ]
+            )
         if self.debug:
             mmguero.eprint(self.naughtyWordList)
 
-        self.muteTimeList = [
-            "volume=enable='between(t,"
-            + format(word["start"] - self.padSecPre, ".3f")
-            + ","
-            + format(word["end"] + self.padSecPost, ".3f")
-            + ")':volume=0"
-            for word in self.naughtyWordList
-        ]
+        self.muteTimeList = []
+        for word, wordPeek in pairwise(self.naughtyWordList):
+            self.muteTimeList.append(
+                "afade=enable='between(t,"
+                + format(word["start"] - self.padSecPre, ".3f")
+                + ","
+                + format(word["end"] + self.padSecPost, ".3f")
+                + ")':t=out:st="
+                + format(word["start"] - self.padSecPre, ".3f")
+                + ":d=5ms"
+            )
+            self.muteTimeList.append(
+                "afade=enable='between(t,"
+                + format(word["end"] + self.padSecPost, ".3f")
+                + ","
+                + format(wordPeek["start"] - self.padSecPre, ".3f")
+                + ")':t=in:st="
+                + format(word["end"] + self.padSecPost, ".3f")
+                + ":d=5ms"
+            )
+
         if self.debug:
             mmguero.eprint(self.muteTimeList)
 
