@@ -15,6 +15,7 @@ import vosk
 import wave
 
 from urllib.parse import urlparse
+from itertools import tee
 
 ###################################################################################################
 CHANNELS_REPLACER = 'CHANNELS'
@@ -358,6 +359,10 @@ class Plugger(object):
         ffmpegCmd = [
             'ffmpeg',
             '-nostdin',
+            '-hide_banner',
+            '-nostats',
+            '-loglevel',
+            'error',
             '-y',
             '-i',
             self.inputFileSpec,
@@ -483,6 +488,10 @@ class Plugger(object):
                 ffmpegCmd = [
                     'ffmpeg',
                     '-nostdin',
+                    '-hide_banner',
+                    '-nostats',
+                    '-loglevel',
+                    'error',
                     '-y',
                     '-i',
                     self.inputFileSpec,
@@ -499,6 +508,10 @@ class Plugger(object):
                 ffmpegCmd = [
                     'ffmpeg',
                     '-nostdin',
+                    '-hide_banner',
+                    '-nostats',
+                    '-loglevel',
+                    'error',
                     '-y',
                     '-i',
                     self.inputFileSpec,
