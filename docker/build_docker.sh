@@ -18,9 +18,9 @@ export SCRIPT_PATH="$($DIRNAME $($REALPATH -e "${BASH_SOURCE[0]}"))"
 pushd "$SCRIPT_PATH"/.. >/dev/null 2>&1
 
 if [[ -n "$VOSK_MODEL_URL" ]]; then
-  $ENGINE build -f docker/Dockerfile --build-arg VOSK_MODEL_URL="$VOSK_MODEL_URL" -t ghcr.io/mmguero/monkeyplug .
+  $ENGINE build -f docker/Dockerfile --build-arg VOSK_MODEL_URL="$VOSK_MODEL_URL" -t oci.guero.top/monkeyplug .
 else
-  $ENGINE build -f docker/Dockerfile -t ghcr.io/mmguero/monkeyplug:small .
+  $ENGINE build -f docker/Dockerfile -t oci.guero.top/monkeyplug:small .
 fi
 
 popd >/dev/null 2>&1

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-export MONKEYPLUG_IMAGE="${MONKEYPLUG_IMAGE:-ghcr.io/mmguero/monkeyplug:small}"
+export MONKEYPLUG_IMAGE="${MONKEYPLUG_IMAGE:-oci.guero.top/monkeyplug:small}"
 ENGINE="${CONTAINER_ENGINE:-docker}"
 if [[ "$ENGINE" == "podman" ]]; then
   CONTAINER_PUID=0
