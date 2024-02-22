@@ -8,10 +8,11 @@ import json
 import mmguero
 import mutagen
 import os
+import pathlib
 import requests
 import shutil
+import string
 import sys
-import vosk
 import wave
 
 from urllib.parse import urlparse
@@ -45,6 +46,16 @@ AUDIO_DEFAULT_WAV_FRAMES_CHUNK = 8000
 SWEARS_FILENAME_DEFAULT = 'swears.txt'
 MUTAGEN_METADATA_TAGS = ['encodedby', 'comment']
 MUTAGEN_METADATA_TAG_VALUE = u'monkeyplug'
+SPEECH_REC_MODE_VOSK = "vosk"
+SPEECH_REC_MODE_WHISPER = "whisper"
+DEFAULT_SPEECH_REC_MODE = os.getenv("MONKEYPLUG_MODE", SPEECH_REC_MODE_VOSK)
+DEFAULT_VOSK_MODEL_DIR = os.getenv(
+    "VOSK_MODEL_DIR", os.path.join(os.path.join(os.path.join(os.path.expanduser("~"), '.cache'), 'vosk'))
+)
+DEFAULT_WHISPER_MODEL_DIR = os.getenv(
+    "WHISPER_MODEL_DIR", os.path.join(os.path.join(os.path.join(os.path.expanduser("~"), '.cache'), 'whisper'))
+)
+DEFAULT_WHISPER_MODEL_NAME = os.getenv("WHISPER_MODEL_NAME", "base.en")
 
 ###################################################################################################
 script_name = os.path.basename(__file__)
@@ -176,19 +187,17 @@ class Plugger(object):
     debug = False
     inputFileSpec = ""
     inputCodecs = {}
+    inputFileParts = None
     outputFileSpec = ""
     outputAudioFileFormat = ""
     outputVideoFileFormat = ""
     outputJson = ""
-    tmpWavFileSpec = ""
     tmpDownloadedFileSpec = ""
     swearsFileSpec = ""
     swearsMap = {}
     wordList = []
     naughtyWordList = []
     muteTimeList = []
-    modelPath = ""
-    wavReadFramesChunk = AUDIO_DEFAULT_WAV_FRAMES_CHUNK
     padSecPre = 0.0
     padSecPost = 0.0
     forceDespiteTag = False
@@ -202,32 +211,19 @@ class Plugger(object):
         oFileSpec,
         oAudioFileFormat,
         iSwearsFileSpec,
-        mPath,
         outputJson,
         aParams=None,
         aChannels=AUDIO_DEFAULT_CHANNELS,
-        wChunk=AUDIO_DEFAULT_WAV_FRAMES_CHUNK,
         padMsecPre=0,
         padMsecPost=0,
         force=False,
         dbug=False,
     ):
-        self.wavReadFramesChunk = wChunk
         self.padSecPre = padMsecPre / 1000.0
         self.padSecPost = padMsecPost / 1000.0
         self.forceDespiteTag = force
         self.debug = dbug
         self.outputJson = outputJson
-
-        # make sure the VOSK model path exists
-        if (mPath is not None) and os.path.isdir(mPath):
-            self.modelPath = mPath
-        else:
-            raise IOError(
-                errno.ENOENT,
-                os.strerror(errno.ENOENT) + " (see https://alphacephei.com/vosk/models)",
-                mPath,
-            )
 
         # determine input file name, or download and save file
         if (iFileSpec is not None) and os.path.isfile(iFileSpec):
@@ -243,7 +239,7 @@ class Plugger(object):
 
         # input file should exist locally by now
         if os.path.isfile(self.inputFileSpec):
-            inParts = os.path.splitext(self.inputFileSpec)
+            self.inputFileParts = os.path.splitext(self.inputFileSpec)
             self.inputCodecs = GetCodecs(self.inputFileSpec)
             inputFormat = next(
                 iter([x for x in self.inputCodecs.get('format', None) if x in AUDIO_DEFAULT_PARAMS_BY_FORMAT]), None
@@ -252,7 +248,7 @@ class Plugger(object):
             raise IOError(errno.ENOENT, os.strerror(errno.ENOENT), self.inputFileSpec)
 
         # determine output file name (either specified or based on input filename)
-        self.outputFileSpec = oFileSpec if oFileSpec else inParts[0] + "_clean"
+        self.outputFileSpec = oFileSpec if oFileSpec else self.inputFileParts[0] + "_clean"
         if self.outputFileSpec:
             outParts = os.path.splitext(self.outputFileSpec)
             if not oAudioFileFormat:
@@ -260,8 +256,8 @@ class Plugger(object):
 
         if str(oAudioFileFormat).upper() == AUDIO_MATCH_FORMAT:
             # output format not specified, base on input filename matching extension (or codec)
-            if inParts[1] in AUDIO_DEFAULT_PARAMS_BY_FORMAT:
-                self.outputFileSpec = self.outputFileSpec + inParts[1]
+            if self.inputFileParts[1] in AUDIO_DEFAULT_PARAMS_BY_FORMAT:
+                self.outputFileSpec = self.outputFileSpec + self.inputFileParts[1]
             elif str(inputFormat).lower() in AUDIO_DEFAULT_PARAMS_BY_FORMAT:
                 self.outputFileSpec = self.outputFileSpec + '.' + inputFormat.lower()
             else:
@@ -299,7 +295,7 @@ class Plugger(object):
 
         # if we're actually just replacing the audio stream(s) inside a video file, the actual output file is still a video file
         self.outputVideoFileFormat = (
-            inParts[1]
+            self.inputFileParts[1]
             if (
                 (len(mmguero.GetIterable(self.inputCodecs.get('video', []))) > 0)
                 and (str(oAudioFileFormat).upper() == AUDIO_MATCH_FORMAT)
@@ -314,8 +310,6 @@ class Plugger(object):
             if self.debug:
                 mmguero.eprint(f'Removing existing destination file {self.outputFileSpec}')
             os.remove(self.outputFileSpec)
-
-        self.tmpWavFileSpec = inParts[0] + ".wav"
 
         # load the swears file (not actually mapping right now, but who knows, speech synthesis maybe someday?)
         if (iSwearsFileSpec is not None) and os.path.isfile(iSwearsFileSpec):
@@ -339,95 +333,17 @@ class Plugger(object):
             mmguero.eprint(f'Output audio format: {self.outputAudioFileFormat}')
             mmguero.eprint(f'Encode parameters: {self.aParams}')
             mmguero.eprint(f'Profanity file: {self.swearsFileSpec}')
-            mmguero.eprint(f'Intermediate audio file: {self.tmpWavFileSpec}')
             mmguero.eprint(f'Intermediate downloaded file: {self.tmpDownloadedFileSpec}')
-            mmguero.eprint(f'Read frames: {self.wavReadFramesChunk}')
             mmguero.eprint(f'Force despite tags: {self.forceDespiteTag}')
 
     ######## del ##################################################################
     def __del__(self):
-        # clean up intermediate WAV file used for speech recognition
-        if os.path.isfile(self.tmpWavFileSpec):
-            os.remove(self.tmpWavFileSpec)
-
         # if we downloaded the input file, remove it as well
         if os.path.isfile(self.tmpDownloadedFileSpec):
             os.remove(self.tmpDownloadedFileSpec)
 
-    ######## CreateIntermediateWAV ###############################################
-    def CreateIntermediateWAV(self):
-        ffmpegCmd = [
-            'ffmpeg',
-            '-nostdin',
-            '-hide_banner',
-            '-nostats',
-            '-loglevel',
-            'error',
-            '-y',
-            '-i',
-            self.inputFileSpec,
-            '-vn',
-            '-sn',
-            '-dn',
-            AUDIO_INTERMEDIATE_PARAMS,
-            self.tmpWavFileSpec,
-        ]
-        ffmpegResult, ffmpegOutput = mmguero.RunProcess(ffmpegCmd, stdout=True, stderr=True, debug=self.debug)
-        if (ffmpegResult != 0) or (not os.path.isfile(self.tmpWavFileSpec)):
-            mmguero.eprint(' '.join(mmguero.Flatten(ffmpegCmd)))
-            mmguero.eprint(ffmpegResult)
-            mmguero.eprint(ffmpegOutput)
-            raise ValueError(
-                f"Could not convert {self.inputFileSpec} to {self.tmpWavFileSpec} (16 kHz, mono, s16 PCM WAV)"
-            )
-
-        return self.inputFileSpec
-
-    ######## CreateIntermediateWAV ###############################################
-    def RecognizeSpeech(self):
-        self.wordList.clear()
-        with wave.open(self.tmpWavFileSpec, "rb") as wf:
-            if (
-                (wf.getnchannels() != 1)
-                or (wf.getframerate() != 16000)
-                or (wf.getsampwidth() != 2)
-                or (wf.getcomptype() != "NONE")
-            ):
-                raise Exception(f"Audio file ({self.tmpWavFileSpec}) must be 16 kHz, mono, s16 PCM WAV")
-
-            rec = vosk.KaldiRecognizer(vosk.Model(self.modelPath), wf.getframerate())
-            rec.SetWords(True)
-            while True:
-                data = wf.readframes(self.wavReadFramesChunk)
-                if len(data) == 0:
-                    break
-                if rec.AcceptWaveform(data):
-                    res = json.loads(rec.Result())
-                    if "result" in res:
-                        self.wordList.extend(
-                            [
-                                dict(r, **{'scrub': mmguero.DeepGet(r, ["word"]) in self.swearsMap})
-                                for r in res["result"]
-                            ]
-                        )
-            res = json.loads(rec.FinalResult())
-            if "result" in res:
-                self.wordList.extend(
-                    [dict(r, **{'scrub': mmguero.DeepGet(r, ["word"]) in self.swearsMap}) for r in res["result"]]
-                )
-
-            if self.debug:
-                mmguero.eprint(json.dumps(self.wordList))
-
-            if self.outputJson:
-                with open(self.outputJson, "w") as f:
-                    f.write(json.dumps(self.wordList))
-
-        return self.wordList
-
     ######## CreateCleanMuteList #################################################
     def CreateCleanMuteList(self):
-        self.CreateIntermediateWAV()
         self.RecognizeSpeech()
 
         self.naughtyWordList = [word for word in self.wordList if word["scrub"] is True]
@@ -523,7 +439,7 @@ class Plugger(object):
                     self.outputFileSpec,
                 ]
             ffmpegResult, ffmpegOutput = mmguero.RunProcess(ffmpegCmd, stdout=True, stderr=True, debug=self.debug)
-            if (ffmpegResult != 0) or (not os.path.isfile(self.tmpWavFileSpec)):
+            if (ffmpegResult != 0) or (not os.path.isfile(self.outputFileSpec)):
                 mmguero.eprint(' '.join(mmguero.Flatten(ffmpegCmd)))
                 mmguero.eprint(ffmpegResult)
                 mmguero.eprint(ffmpegOutput)
@@ -535,6 +451,225 @@ class Plugger(object):
             shutil.copyfile(self.inputFileSpec, self.outputFileSpec)
 
         return self.outputFileSpec
+
+
+#################################################################################
+
+
+#################################################################################
+class VoskPlugger(Plugger):
+    tmpWavFileSpec = ""
+    modelPath = ""
+    wavReadFramesChunk = AUDIO_DEFAULT_WAV_FRAMES_CHUNK
+    vosk = None
+
+    def __init__(
+        self,
+        iFileSpec,
+        oFileSpec,
+        oAudioFileFormat,
+        iSwearsFileSpec,
+        mDir,
+        outputJson,
+        aParams=None,
+        aChannels=AUDIO_DEFAULT_CHANNELS,
+        wChunk=AUDIO_DEFAULT_WAV_FRAMES_CHUNK,
+        padMsecPre=0,
+        padMsecPost=0,
+        force=False,
+        dbug=False,
+    ):
+        self.wavReadFramesChunk = wChunk
+
+        # make sure the VOSK model path exists
+        if (mDir is not None) and os.path.isdir(mDir):
+            self.modelPath = mDir
+        else:
+            raise IOError(
+                errno.ENOENT,
+                os.strerror(errno.ENOENT) + " (see https://alphacephei.com/vosk/models)",
+                mDir,
+            )
+
+        self.vosk = mmguero.DoDynamicImport("vosk", "vosk", debug=dbug)
+        if not self.vosk:
+            raise Exception(f"Unable to initialize VOSK API")
+        if not dbug:
+            self.vosk.SetLogLevel(-1)
+
+        super().__init__(
+            iFileSpec=iFileSpec,
+            oFileSpec=oFileSpec,
+            oAudioFileFormat=oAudioFileFormat,
+            iSwearsFileSpec=iSwearsFileSpec,
+            outputJson=outputJson,
+            aParams=aParams,
+            aChannels=aChannels,
+            padMsecPre=padMsecPre,
+            padMsecPost=padMsecPost,
+            force=force,
+            dbug=dbug,
+        )
+
+        self.tmpWavFileSpec = self.inputFileParts[0] + ".wav"
+
+        if self.debug:
+            mmguero.eprint(f'Model directory: {self.modelPath}')
+            mmguero.eprint(f'Intermediate audio file: {self.tmpWavFileSpec}')
+            mmguero.eprint(f'Read frames: {self.wavReadFramesChunk}')
+
+    def __del__(self):
+        super().__del__()
+        # clean up intermediate WAV file used for speech recognition
+        if os.path.isfile(self.tmpWavFileSpec):
+            os.remove(self.tmpWavFileSpec)
+
+    def CreateIntermediateWAV(self):
+        ffmpegCmd = [
+            'ffmpeg',
+            '-nostdin',
+            '-hide_banner',
+            '-nostats',
+            '-loglevel',
+            'error',
+            '-y',
+            '-i',
+            self.inputFileSpec,
+            '-vn',
+            '-sn',
+            '-dn',
+            AUDIO_INTERMEDIATE_PARAMS,
+            self.tmpWavFileSpec,
+        ]
+        ffmpegResult, ffmpegOutput = mmguero.RunProcess(ffmpegCmd, stdout=True, stderr=True, debug=self.debug)
+        if (ffmpegResult != 0) or (not os.path.isfile(self.tmpWavFileSpec)):
+            mmguero.eprint(' '.join(mmguero.Flatten(ffmpegCmd)))
+            mmguero.eprint(ffmpegResult)
+            mmguero.eprint(ffmpegOutput)
+            raise ValueError(
+                f"Could not convert {self.inputFileSpec} to {self.tmpWavFileSpec} (16 kHz, mono, s16 PCM WAV)"
+            )
+
+        return self.inputFileSpec
+
+    def RecognizeSpeech(self):
+        self.CreateIntermediateWAV()
+        self.wordList.clear()
+        with wave.open(self.tmpWavFileSpec, "rb") as wf:
+            if (
+                (wf.getnchannels() != 1)
+                or (wf.getframerate() != 16000)
+                or (wf.getsampwidth() != 2)
+                or (wf.getcomptype() != "NONE")
+            ):
+                raise Exception(f"Audio file ({self.tmpWavFileSpec}) must be 16 kHz, mono, s16 PCM WAV")
+
+            rec = self.vosk.KaldiRecognizer(self.vosk.Model(self.modelPath), wf.getframerate())
+            rec.SetWords(True)
+            while True:
+                data = wf.readframes(self.wavReadFramesChunk)
+                if len(data) == 0:
+                    break
+                if rec.AcceptWaveform(data):
+                    res = json.loads(rec.Result())
+                    if "result" in res:
+                        self.wordList.extend(
+                            [
+                                dict(r, **{'scrub': mmguero.DeepGet(r, ["word"]) in self.swearsMap})
+                                for r in res["result"]
+                            ]
+                        )
+            res = json.loads(rec.FinalResult())
+            if "result" in res:
+                self.wordList.extend(
+                    [dict(r, **{'scrub': mmguero.DeepGet(r, ["word"]) in self.swearsMap}) for r in res["result"]]
+                )
+
+            if self.debug:
+                mmguero.eprint(json.dumps(self.wordList))
+
+            if self.outputJson:
+                with open(self.outputJson, "w") as f:
+                    f.write(json.dumps(self.wordList))
+
+        return self.wordList
+
+
+#################################################################################
+
+
+#################################################################################
+class WhisperPlugger(Plugger):
+    debug = False
+    model = None
+    whisper = None
+    transcript = None
+
+    def __init__(
+        self,
+        iFileSpec,
+        oFileSpec,
+        oAudioFileFormat,
+        iSwearsFileSpec,
+        mDir,
+        mName,
+        outputJson,
+        aParams=None,
+        aChannels=AUDIO_DEFAULT_CHANNELS,
+        padMsecPre=0,
+        padMsecPost=0,
+        force=False,
+        dbug=False,
+    ):
+        self.whisper = mmguero.DoDynamicImport("whisper", "openai-whisper", debug=dbug)
+        if not self.whisper:
+            raise Exception("Unable to initialize Whisper API")
+
+        self.model = self.whisper.load_model(mName, download_root=mDir)
+        if not self.model:
+            raise Exception(f"Unable to load Whisper model {mName} in {mDir}")
+
+        super().__init__(
+            iFileSpec=iFileSpec,
+            oFileSpec=oFileSpec,
+            oAudioFileFormat=oAudioFileFormat,
+            iSwearsFileSpec=iSwearsFileSpec,
+            outputJson=outputJson,
+            aParams=aParams,
+            aChannels=aChannels,
+            padMsecPre=padMsecPre,
+            padMsecPost=padMsecPost,
+            force=force,
+            dbug=dbug,
+        )
+
+        if self.debug:
+            mmguero.eprint(f'Model directory: {mDir}')
+            mmguero.eprint(f'Model name: {mName}')
+
+    def __del__(self):
+        super().__del__()
+
+    def RecognizeSpeech(self):
+        self.wordList.clear()
+
+        self.transcript = self.model.transcribe(word_timestamps=True, audio=self.inputFileSpec)
+        if self.transcript and ('segments' in self.transcript):
+            for segment in self.transcript['segments']:
+                if 'words' in segment:
+                    for word in segment['words']:
+                        word['word'] = word['word'].lower().strip().translate(str.maketrans('', '', string.punctuation))
+                        word['scrub'] = word['word'] in self.swearsMap
+                        self.wordList.append(word)
+
+        if self.debug:
+            mmguero.eprint(json.dumps(self.wordList))
+
+        if self.outputJson:
+            with open(self.outputJson, "w") as f:
+                f.write(json.dumps(self.wordList))
+
+        return self.wordList
 
 
 #################################################################################
@@ -558,6 +693,15 @@ def RunMonkeyPlug():
         default=False,
         metavar="true|false",
         help="Verbose/debug output",
+    )
+    parser.add_argument(
+        "-m",
+        "--mode",
+        dest="speechRecMode",
+        metavar="<string>",
+        type=str,
+        default=DEFAULT_SPEECH_REC_MODE,
+        help=f"Speech recognition engine ({SPEECH_REC_MODE_WHISPER}|{SPEECH_REC_MODE_VOSK}) (default: {DEFAULT_SPEECH_REC_MODE})",
     )
     parser.add_argument(
         "-i",
@@ -586,7 +730,7 @@ def RunMonkeyPlug():
         default=None,
         required=False,
         metavar="<string>",
-        help="Output file to store JSON generated by VOSK",
+        help="Output file to store transcript JSON",
     )
     parser.add_argument(
         "-w",
@@ -622,29 +766,12 @@ def RunMonkeyPlug():
         help=f"Output file format (default: inferred from extension of --output, or \"{AUDIO_MATCH_FORMAT}\")",
     )
     parser.add_argument(
-        "-m",
-        "--model",
-        dest="modelPath",
-        metavar="<string>",
-        type=str,
-        default=os.getenv("VOSK_MODEL", os.path.join(script_path, "model")),
-        help="Vosk model path (default: \"model\")",
-    )
-    parser.add_argument(
-        "--frames",
-        dest="readFramesChunk",
-        metavar="<int>",
-        type=int,
-        default=os.getenv("VOSK_READ_FRAMES", AUDIO_DEFAULT_WAV_FRAMES_CHUNK),
-        help=f"WAV frame chunk (default: {AUDIO_DEFAULT_WAV_FRAMES_CHUNK})",
-    )
-    parser.add_argument(
         "--pad-milliseconds",
         dest="padMsec",
         metavar="<int>",
         type=int,
         default=0,
-        help=f"Milliseconds to pad on either side of muted segments",
+        help=f"Milliseconds to pad on either side of muted segments (default: 0)",
     )
     parser.add_argument(
         "--pad-milliseconds-pre",
@@ -652,7 +779,7 @@ def RunMonkeyPlug():
         metavar="<int>",
         type=int,
         default=0,
-        help=f"Milliseconds to pad before muted segments",
+        help=f"Milliseconds to pad before muted segments (default: 0)",
     )
     parser.add_argument(
         "--pad-milliseconds-post",
@@ -660,7 +787,7 @@ def RunMonkeyPlug():
         metavar="<int>",
         type=int,
         default=0,
-        help=f"Milliseconds to pad after muted segments",
+        help=f"Milliseconds to pad after muted segments (default: 0)",
     )
     parser.add_argument(
         "--force",
@@ -671,6 +798,42 @@ def RunMonkeyPlug():
         default=False,
         metavar="true|false",
         help="Process file despite existence of embedded tag",
+    )
+
+    voskArgGroup = parser.add_argument_group('VOSK Options')
+    voskArgGroup.add_argument(
+        "--vosk-model-dir",
+        dest="voskModelDir",
+        metavar="<string>",
+        type=str,
+        default=DEFAULT_VOSK_MODEL_DIR,
+        help=f"VOSK model directory (default: {DEFAULT_VOSK_MODEL_DIR})",
+    )
+    voskArgGroup.add_argument(
+        "--vosk-read-frames-chunk",
+        dest="voskReadFramesChunk",
+        metavar="<int>",
+        type=int,
+        default=os.getenv("VOSK_READ_FRAMES", AUDIO_DEFAULT_WAV_FRAMES_CHUNK),
+        help=f"WAV frame chunk (default: {AUDIO_DEFAULT_WAV_FRAMES_CHUNK})",
+    )
+
+    whisperArgGroup = parser.add_argument_group('Whisper Options')
+    whisperArgGroup.add_argument(
+        "--whisper-model-dir",
+        dest="whisperModelDir",
+        metavar="<string>",
+        type=str,
+        default=DEFAULT_WHISPER_MODEL_DIR,
+        help=f"Whisper model directory ({DEFAULT_WHISPER_MODEL_DIR})",
+    )
+    whisperArgGroup.add_argument(
+        "--whisper-model-name",
+        dest="whisperModelName",
+        metavar="<string>",
+        type=str,
+        default=DEFAULT_WHISPER_MODEL_NAME,
+        help=f"Whisper model name ({DEFAULT_WHISPER_MODEL_NAME})",
     )
 
     try:
@@ -687,25 +850,46 @@ def RunMonkeyPlug():
         mmguero.eprint("Arguments: {}".format(args))
     else:
         sys.tracebacklimit = 0
-        vosk.SetLogLevel(-1)
 
-    print(
-        Plugger(
+    if args.speechRecMode == SPEECH_REC_MODE_VOSK:
+        pathlib.Path(args.voskModelDir).mkdir(parents=True, exist_ok=True)
+        plug = VoskPlugger(
             args.input,
             args.output,
             args.outputFormat,
             args.swears,
-            args.modelPath,
+            args.voskModelDir,
             args.outputJson,
             aParams=args.aParams,
             aChannels=args.aChannels,
-            wChunk=args.readFramesChunk,
+            wChunk=args.voskReadFramesChunk,
             padMsecPre=args.padMsecPre if args.padMsecPre > 0 else args.padMsec,
             padMsecPost=args.padMsecPost if args.padMsecPost > 0 else args.padMsec,
             force=args.forceDespiteTag,
             dbug=args.debug,
-        ).EncodeCleanAudio()
-    )
+        )
+
+    elif args.speechRecMode == SPEECH_REC_MODE_WHISPER:
+        pathlib.Path(args.whisperModelDir).mkdir(parents=True, exist_ok=True)
+        plug = WhisperPlugger(
+            args.input,
+            args.output,
+            args.outputFormat,
+            args.swears,
+            args.whisperModelDir,
+            args.whisperModelName,
+            args.outputJson,
+            aParams=args.aParams,
+            aChannels=args.aChannels,
+            padMsecPre=args.padMsecPre if args.padMsecPre > 0 else args.padMsec,
+            padMsecPost=args.padMsecPost if args.padMsecPost > 0 else args.padMsec,
+            force=args.forceDespiteTag,
+            dbug=args.debug,
+        )
+    else:
+        raise ValueError(f"Unsupported speech recognition engine {args.speechRecMode}")
+
+    print(plug.EncodeCleanAudio())
 
 
 ###################################################################################################
