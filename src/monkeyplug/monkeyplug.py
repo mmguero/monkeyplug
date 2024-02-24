@@ -326,7 +326,6 @@ class Plugger(object):
         for line in lines:
             lineMap = line.split("|")
             self.swearsMap[scrubword(lineMap[0])] = lineMap[1] if len(lineMap) > 1 else "*****"
-        mmguero.eprint(self.swearsMap)
 
         if self.debug:
             mmguero.eprint(f'Input: {self.inputFileSpec}')

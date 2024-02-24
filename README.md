@@ -96,7 +96,26 @@ Whisper Options:
 
 ### Docker
 
-Alternately, a [Dockerfile](./docker/Dockerfile) is provided to allow you to run monkeyplug in Docker. You can pull either the `oci.guero.top/monkeyplug:small` or `oci.guero.top/monkeyplug:large` Docker images, or build with [`build_docker.sh`](./docker/build_docker.sh), then run [`monkeyplug-docker.sh`](./docker/monkeyplug-docker.sh) inside the directory where your audio files are located.
+Alternately, a [Dockerfile](./docker/Dockerfile) is provided to allow you to run monkeyplug in Docker. You can pull one of the following images:
+
+* [VOSK](https://alphacephei.com/vosk/models)
+    - oci.guero.top/monkeyplug:vosk-small
+    - oci.guero.top/monkeyplug:vosk-large
+* [Whisper](https://github.com/openai/whisper?tab=readme-ov-file#available-models-and-languages)
+    - oci.guero.top/monkeyplug:whisper-tiny.en
+    - oci.guero.top/monkeyplug:whisper-tiny
+    - oci.guero.top/monkeyplug:whisper-base.en
+    - oci.guero.top/monkeyplug:whisper-base
+    - oci.guero.top/monkeyplug:whisper-small.en
+    - oci.guero.top/monkeyplug:whisper-small
+    - oci.guero.top/monkeyplug:whisper-medium.en
+    - oci.guero.top/monkeyplug:whisper-medium
+    - oci.guero.top/monkeyplug:whisper-large-v1
+    - oci.guero.top/monkeyplug:whisper-large-v2
+    - oci.guero.top/monkeyplug:whisper-large-v3
+    - oci.guero.top/monkeyplug:whisper-large
+
+then run [`monkeyplug-docker.sh`](./docker/monkeyplug-docker.sh) inside the directory where your audio files are located.
 
 ## Contributing
 

@@ -69,5 +69,5 @@ RUN python3 -m pip install --no-cache openai-whisper && \
     mkdir -p "$WHISPER_MODEL_DIR" && \
     cd "$WHISPER_MODEL_DIR" && \
     echo "Downloading Whisper model \"$WHISPER_MODEL_NAME\"..." && \
-    curl -fsSL -o ./"$WHISPER_MODEL_NAME" "$(curl -fsSL https://raw.githubusercontent.com/openai/whisper/main/whisper/__init__.py | grep -P "\"$WHISPER_MODEL_NAME\"\s*:\s*\"https://" | cut -d: -f2- | sed 's/^[[:space:]]*"//' | sed 's/",*$//')" && \
+    curl -fsSL -o ./"$WHISPER_MODEL_NAME".pt "$(curl -fsSL https://raw.githubusercontent.com/openai/whisper/main/whisper/__init__.py | grep -P "\"$WHISPER_MODEL_NAME\"\s*:\s*\"https://" | cut -d: -f2- | sed 's/^[[:space:]]*"//' | sed 's/",*$//')" && \
     echo "Finished"
