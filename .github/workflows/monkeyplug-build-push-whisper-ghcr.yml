@@ -6,6 +6,7 @@ on:
     branches:
       - 'main'
     paths:
+      - '**'
       - '!.github/workflows/monkeyplug-build-push-vosk-ghcr.yml'
       - '!.github/workflows/publish-to-pypi.yml'
   pull_request:
