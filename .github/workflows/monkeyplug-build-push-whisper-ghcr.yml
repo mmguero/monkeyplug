@@ -94,7 +94,6 @@ jobs:
         id: build-and-push
         uses: docker/build-push-action@v5
         with:
-          context: ./malcolm-iso
           push: true
           tags: ${{ env.IMAGE_NAME }}:whisper-${{ matrix.value }}
           context: ${{ env.REPO_CONTEXT }}
