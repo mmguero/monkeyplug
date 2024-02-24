@@ -101,7 +101,7 @@ jobs:
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: 'image'
-          image-ref: ${{ steps.build-vosk-image.outputs.image }}:${{ steps.build-whisper-image.outputs.tags }}
+          image-ref: ${{ steps.build-whisper-image.outputs.image }}:${{ steps.build-whisper-image.outputs.tags }}
           format: 'sarif'
           output: 'trivy-results.sarif'
           severity: 'HIGH,CRITICAL'
