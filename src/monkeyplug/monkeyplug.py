@@ -48,7 +48,7 @@ MUTAGEN_METADATA_TAGS = ['encodedby', 'comment']
 MUTAGEN_METADATA_TAG_VALUE = u'monkeyplug'
 SPEECH_REC_MODE_VOSK = "vosk"
 SPEECH_REC_MODE_WHISPER = "whisper"
-DEFAULT_SPEECH_REC_MODE = os.getenv("MONKEYPLUG_MODE", SPEECH_REC_MODE_VOSK)
+DEFAULT_SPEECH_REC_MODE = os.getenv("MONKEYPLUG_MODE", SPEECH_REC_MODE_WHISPER)
 DEFAULT_VOSK_MODEL_DIR = os.getenv(
     "VOSK_MODEL_DIR", os.path.join(os.path.join(os.path.join(os.path.expanduser("~"), '.cache'), 'vosk'))
 )
