@@ -53,6 +53,7 @@ jobs:
       contents: read
       security-events: write
     strategy:
+      fail-fast: false
       matrix:
         value: ${{fromJSON(needs.setup.outputs.matrix)}}
     steps:
