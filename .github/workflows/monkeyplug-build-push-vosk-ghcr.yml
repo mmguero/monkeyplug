@@ -79,6 +79,17 @@ jobs:
         run: echo "url=$(echo ${{ matrix.value }} | cut -d'~' -f2)" >> $GITHUB_OUTPUT
         id: extract_url
       -
+        name: Free up space
+        shell: bash
+        run: echo "url=$(echo ${{ matrix.value }} | cut -d'~' -f2)" >> $GITHUB_OUTPUT
+        id: remove_useless_stuff
+        run: |
+          sudo rm -rf /usr/share/dotnet \
+                      /usr/local/lib/android \
+                      /opt/ghc \
+                      /usr/local/share/boost \
+                      "$AGENT_TOOLSDIRECTORY" || true
+      -
         name: Build (VOSK)
         id: build-vosk-image
         uses: redhat-actions/buildah-build@v2
