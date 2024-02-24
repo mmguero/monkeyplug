@@ -31,7 +31,7 @@ jobs:
       -
         name: Cancel previous run in progress
         id: cancel-previous-runs
-        uses: styfle/cancel-workflow-action@0.11.0
+        uses: styfle/cancel-workflow-action@0.12.1
         with:
           ignore_sha: true
           all_but_latest: true
@@ -59,7 +59,7 @@ jobs:
       -
         name: Checkout
         id: repo-checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       -
         name: Set up QEMU
         id: setup-qemu
