@@ -85,7 +85,6 @@ jobs:
       -
         name: Free up space
         shell: bash
-        run: echo "url=$(echo ${{ matrix.value }} | cut -d'~' -f2)" >> $GITHUB_OUTPUT
         id: remove_useless_stuff
         run: |
           sudo rm -rf /usr/share/dotnet \
