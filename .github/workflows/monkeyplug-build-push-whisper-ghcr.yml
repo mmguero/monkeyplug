@@ -63,15 +63,14 @@ jobs:
       -
         name: Set up QEMU
         id: setup-qemu
-        uses: docker/setup-qemu-action@v2
+        uses: docker/setup-qemu-action@v3
       -
-        name: Log in to registry
-        id: registry-login
-        uses: redhat-actions/podman-login@v1
+        name: Set up Docker Buildx
+        id: setup-docker-buildx
+        uses: docker/setup-buildx-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          driver-opts: |
+            image=moby/buildkit:master
       -
         name: Free up space
         shell: bash
@@ -83,43 +82,24 @@ jobs:
                       /usr/local/share/boost \
                       "$AGENT_TOOLSDIRECTORY" || true
       -
-        name: Build (Whisper)
-        id: build-whisper-image
-        uses: redhat-actions/buildah-build@v2
+        name: ghcr.io login
+        id: ghcr-io-login
+        uses: docker/login-action@v3
         with:
-          image: ${{ env.IMAGE_NAME }}
-          tags: whisper-${{ matrix.value }}
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      -
+        name: Build and push Monkeyplug (Whisper) image
+        id: build-and-push
+        uses: docker/build-push-action@v5
+        with:
+          context: ./malcolm-iso
+          push: true
+          tags: ${{ env.IMAGE_NAME }}:whisper-${{ matrix.value }}
           context: ${{ env.REPO_CONTEXT }}
-          containerfiles: ${{ env.REPO_CONTAINERFILE }}
-          archs: ${{ env.IMAGE_ARCH }}
+          file: ${{ env.REPO_CONTAINERFILE }}
+          platforms: ${{ env.IMAGE_ARCH }}
           target: whisper
           build-args: |
             WHISPER_MODEL_NAME=${{ matrix.value }}
-      -
-        name: Run Trivy vulnerability scanner (Whisper)
-        id: trivy-scan
-        uses: aquasecurity/trivy-action@master
-        with:
-          scan-type: 'image'
-          image-ref: ${{ steps.build-whisper-image.outputs.image }}:${{ steps.build-whisper-image.outputs.tags }}
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-          severity: 'HIGH,CRITICAL'
-          vuln-type: 'os,library'
-          hide-progress: true
-          ignore-unfixed: true
-          exit-code: '0'
-      -
-        name: Upload Trivy scan results to GitHub Security tab (Whisper)
-        uses: github/codeql-action/upload-sarif@v2
-        if: always()
-        with:
-          sarif_file: 'trivy-results.sarif'
-      -
-        name: Push (Whisper)
-        id: push-whisper-image
-        uses: redhat-actions/push-to-registry@v2
-        with:
-          image: ${{ steps.build-whisper-image.outputs.image }}
-          tags: ${{ steps.build-whisper-image.outputs.tags }}
-          registry: ${{ env.REGISTRY }}
