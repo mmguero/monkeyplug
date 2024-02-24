@@ -69,6 +69,10 @@ def pairwise(iterable):
     return zip(a, b)
 
 
+def scrubword(value):
+    return str(value).lower().strip().translate(str.maketrans('', '', string.punctuation))
+
+
 ###################################################################################################
 # download to file
 def DownloadToFile(url, local_filename=None, chunk_bytes=4096, debug=False):
@@ -318,13 +322,11 @@ class Plugger(object):
             raise IOError(errno.ENOENT, os.strerror(errno.ENOENT), iSwearsFileSpec)
         lines = []
         with open(self.swearsFileSpec) as f:
-            lines = [line.rstrip("\n").lower() for line in f]
+            lines = [line.rstrip("\n") for line in f]
         for line in lines:
             lineMap = line.split("|")
-            if len(lineMap) > 1:
-                self.swearsMap[lineMap[0]] = lineMap[1]
-            else:
-                self.swearsMap[lineMap[0]] = "*****"
+            self.swearsMap[scrubword(lineMap[0])] = lineMap[1] if len(lineMap) > 1 else "*****"
+        mmguero.eprint(self.swearsMap)
 
         if self.debug:
             mmguero.eprint(f'Input: {self.inputFileSpec}')
@@ -575,14 +577,17 @@ class VoskPlugger(Plugger):
                     if "result" in res:
                         self.wordList.extend(
                             [
-                                dict(r, **{'scrub': mmguero.DeepGet(r, ["word"]) in self.swearsMap})
+                                dict(r, **{'scrub': scrubword(mmguero.DeepGet(r, ["word"])) in self.swearsMap})
                                 for r in res["result"]
                             ]
                         )
             res = json.loads(rec.FinalResult())
             if "result" in res:
                 self.wordList.extend(
-                    [dict(r, **{'scrub': mmguero.DeepGet(r, ["word"]) in self.swearsMap}) for r in res["result"]]
+                    [
+                        dict(r, **{'scrub': scrubword(mmguero.DeepGet(r, ["word"])) in self.swearsMap})
+                        for r in res["result"]
+                    ]
                 )
 
             if self.debug:
@@ -658,8 +663,8 @@ class WhisperPlugger(Plugger):
             for segment in self.transcript['segments']:
                 if 'words' in segment:
                     for word in segment['words']:
-                        word['word'] = word['word'].lower().strip().translate(str.maketrans('', '', string.punctuation))
-                        word['scrub'] = word['word'] in self.swearsMap
+                        word['word'] = word['word'].strip()
+                        word['scrub'] = scrubword(word['word']) in self.swearsMap
                         self.wordList.append(word)
 
         if self.debug:

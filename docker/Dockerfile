@@ -1,13 +1,6 @@
 ########################################################################################################################
 FROM python:3-slim as base
 
-LABEL maintainer="mero.mero.guero@gmail.com"
-LABEL org.opencontainers.image.authors='mero.mero.guero@gmail.com'
-LABEL org.opencontainers.image.url='https://github.com/mmguero/monkeyplug'
-LABEL org.opencontainers.image.source='https://github.com/mmguero/monkeyplug'
-LABEL org.opencontainers.image.title='mmguero/monkeyplug'
-LABEL org.opencontainers.image.description='Dockerized monkeyplug'
-
 ENV DEBIAN_FRONTEND noninteractive
 ENV TERM xterm
 ENV PYTHONUNBUFFERED 1
@@ -32,6 +25,13 @@ CMD []
 ########################################################################################################################
 FROM base as vosk
 
+LABEL maintainer="mero.mero.guero@gmail.com"
+LABEL org.opencontainers.image.authors='mero.mero.guero@gmail.com'
+LABEL org.opencontainers.image.url='https://github.com/mmguero/monkeyplug'
+LABEL org.opencontainers.image.source='https://github.com/mmguero/monkeyplug'
+LABEL org.opencontainers.image.title='mmguero/monkeyplug'
+LABEL org.opencontainers.image.description='Dockerized monkeyplug (VOSK-based)'
+
 ENV MONKEYPLUG_MODE vosk
 ENV VOSK_MODEL_DIR /opt/vosk_model
 
@@ -50,6 +50,13 @@ RUN python3 -m pip install --no-cache vosk && \
 
 ########################################################################################################################
 FROM base as whisper
+
+LABEL maintainer="mero.mero.guero@gmail.com"
+LABEL org.opencontainers.image.authors='mero.mero.guero@gmail.com'
+LABEL org.opencontainers.image.url='https://github.com/mmguero/monkeyplug'
+LABEL org.opencontainers.image.source='https://github.com/mmguero/monkeyplug'
+LABEL org.opencontainers.image.title='mmguero/monkeyplug'
+LABEL org.opencontainers.image.description='Dockerized monkeyplug (Whisper-based)'
 
 ENV MONKEYPLUG_MODE whisper
 ENV WHISPER_MODEL_DIR /opt/whisper_model
