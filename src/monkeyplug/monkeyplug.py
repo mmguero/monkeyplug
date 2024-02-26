@@ -55,7 +55,7 @@ DEFAULT_VOSK_MODEL_DIR = os.getenv(
 DEFAULT_WHISPER_MODEL_DIR = os.getenv(
     "WHISPER_MODEL_DIR", os.path.join(os.path.join(os.path.join(os.path.expanduser("~"), '.cache'), 'whisper'))
 )
-DEFAULT_WHISPER_MODEL_NAME = os.getenv("WHISPER_MODEL_NAME", "base.en")
+DEFAULT_WHISPER_MODEL_NAME = os.getenv("WHISPER_MODEL_NAME", "small.en")
 
 ###################################################################################################
 script_name = os.path.basename(__file__)

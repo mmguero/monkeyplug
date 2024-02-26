@@ -91,7 +91,7 @@ Whisper Options:
   --whisper-model-dir <string>
                         Whisper model directory (~/.cache/whisper)
   --whisper-model-name <string>
-                        Whisper model name (base.en)
+                        Whisper model name (small.en)
 ```
 
 ### Docker

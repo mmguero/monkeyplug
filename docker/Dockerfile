@@ -62,7 +62,7 @@ ENV MONKEYPLUG_MODE whisper
 ENV WHISPER_MODEL_DIR /opt/whisper_model
 
 # see https://github.com/openai/whisper?tab=readme-ov-file#available-models-and-languages
-ARG WHISPER_MODEL_NAME="base.en"
+ARG WHISPER_MODEL_NAME="small.en"
 ENV WHISPER_MODEL_NAME $WHISPER_MODEL_NAME
 
 RUN python3 -m pip install --no-cache openai-whisper && \
