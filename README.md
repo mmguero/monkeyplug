@@ -83,6 +83,12 @@ options:
                         Beep instead of silence
   -h <int>, --beep-hertz <int>
                         Beep frequency hertz (default: 1000)
+  --beep-audio-weight <int>
+                        Mix weight for non-beeped audio (default: 4)
+  --beep-sine-weight <int>
+                        Mix weight for beep (default: 1)
+  --beep-dropout-transition <int>
+                        Dropout transition for beep (default: 0)
   --force [true|false]  Process file despite existence of embedded tag
 
 VOSK Options:

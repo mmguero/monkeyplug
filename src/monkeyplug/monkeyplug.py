@@ -44,6 +44,9 @@ AUDIO_MATCH_FORMAT = "MATCH"
 AUDIO_INTERMEDIATE_PARAMS = ["-c:a", "pcm_s16le", "-ac", "1", "-ar", "16000"]
 AUDIO_DEFAULT_WAV_FRAMES_CHUNK = 8000
 BEEP_HERTZ_DEFAULT = 1000
+BEEP_AUDIO_WEIGHT_DEFAULT = 4
+BEEP_SINE_WEIGHT_DEFAULT = 1
+BEEP_DROPOUT_TRANSITION_DEFAULT = 0
 SWEARS_FILENAME_DEFAULT = 'swears.txt'
 MUTAGEN_METADATA_TAGS = ['encodedby', 'comment']
 MUTAGEN_METADATA_TAG_VALUE = u'monkeyplug'
@@ -211,6 +214,9 @@ class Plugger(object):
     padSecPost = 0.0
     beep = False
     beepHertz = BEEP_HERTZ_DEFAULT
+    beepAudioWeight = BEEP_AUDIO_WEIGHT_DEFAULT
+    beepSineWeight = BEEP_SINE_WEIGHT_DEFAULT
+    beepDropTransition = BEEP_DROPOUT_TRANSITION_DEFAULT
     forceDespiteTag = False
     aParams = None
     tags = None
@@ -229,6 +235,9 @@ class Plugger(object):
         padMsecPost=0,
         beep=False,
         beepHertz=BEEP_HERTZ_DEFAULT,
+        beepAudioWeight=BEEP_AUDIO_WEIGHT_DEFAULT,
+        beepSineWeight=BEEP_SINE_WEIGHT_DEFAULT,
+        beepDropTransition=BEEP_DROPOUT_TRANSITION_DEFAULT,
         force=False,
         dbug=False,
     ):
@@ -236,6 +245,9 @@ class Plugger(object):
         self.padSecPost = padMsecPost / 1000.0
         self.beep = beep
         self.beepHertz = beepHertz
+        self.beepAudioWeight = beepAudioWeight
+        self.beepSineWeight = beepSineWeight
+        self.beepDropTransition = beepDropTransition
         self.forceDespiteTag = force
         self.debug = dbug
         self.outputJson = outputJson
@@ -347,7 +359,11 @@ class Plugger(object):
             mmguero.eprint(f'Profanity file: {self.swearsFileSpec}')
             mmguero.eprint(f'Intermediate downloaded file: {self.tmpDownloadedFileSpec}')
             mmguero.eprint(f'Beep instead of mute: {self.beep}')
-            mmguero.eprint(f'Beep hertz: {self.beepHertz}')
+            if self.beep:
+                mmguero.eprint(f'Beep hertz: {self.beepHertz}')
+                mmguero.eprint(f'Beep audio weight: {self.beepAudioWeight}')
+                mmguero.eprint(f'Beep sine weight: {self.beepSineWeight}')
+                mmguero.eprint(f'Beep dropout transition: {self.beepDropTransition}')
             mmguero.eprint(f'Force despite tags: {self.forceDespiteTag}')
 
     ######## del ##################################################################
@@ -420,7 +436,7 @@ class Plugger(object):
                         [f'[beep{i+1}]{val}[beep{i+1}_delayed]' for i, val in enumerate(self.beepDelayList)]
                     )
                     beepMixList = ''.join([f'[beep{i+1}_delayed]' for i in range(len(self.beepDelayList))])
-                    filterStr = f"[0:a]{muteTimeListStr}[mute];{sineTimeListStr};{beepDelayList};[mute]{beepMixList}amix=inputs={len(self.beepDelayList)+1}"
+                    filterStr = f"[0:a]{muteTimeListStr}[mute];{sineTimeListStr};{beepDelayList};[mute]{beepMixList}amix=inputs={len(self.beepDelayList)+1}:dropout_transition={self.beepDropTransition}:weights={self.beepAudioWeight} {' '.join([str(self.beepSineWeight)] * len(self.beepDelayList))}"
                     audioArgs = ['-filter_complex', filterStr]
                 else:
                     audioArgs = ['-af', ",".join(self.muteTimeList)]
@@ -506,6 +522,9 @@ class VoskPlugger(Plugger):
         padMsecPost=0,
         beep=False,
         beepHertz=BEEP_HERTZ_DEFAULT,
+        beepAudioWeight=BEEP_AUDIO_WEIGHT_DEFAULT,
+        beepSineWeight=BEEP_SINE_WEIGHT_DEFAULT,
+        beepDropTransition=BEEP_DROPOUT_TRANSITION_DEFAULT,
         force=False,
         dbug=False,
     ):
@@ -539,6 +558,9 @@ class VoskPlugger(Plugger):
             padMsecPost=padMsecPost,
             beep=beep,
             beepHertz=beepHertz,
+            beepAudioWeight=beepAudioWeight,
+            beepSineWeight=beepSineWeight,
+            beepDropTransition=beepDropTransition,
             force=force,
             dbug=dbug,
         )
@@ -655,6 +677,9 @@ class WhisperPlugger(Plugger):
         padMsecPost=0,
         beep=False,
         beepHertz=BEEP_HERTZ_DEFAULT,
+        beepAudioWeight=BEEP_AUDIO_WEIGHT_DEFAULT,
+        beepSineWeight=BEEP_SINE_WEIGHT_DEFAULT,
+        beepDropTransition=BEEP_DROPOUT_TRANSITION_DEFAULT,
         force=False,
         dbug=False,
     ):
@@ -678,6 +703,9 @@ class WhisperPlugger(Plugger):
             padMsecPost=padMsecPost,
             beep=beep,
             beepHertz=beepHertz,
+            beepAudioWeight=beepAudioWeight,
+            beepSineWeight=beepSineWeight,
+            beepDropTransition=beepDropTransition,
             force=force,
             dbug=dbug,
         )
@@ -849,6 +877,31 @@ def RunMonkeyPlug():
         help=f"Beep frequency hertz (default: {BEEP_HERTZ_DEFAULT})",
     )
     parser.add_argument(
+        "--beep-audio-weight",
+        dest="beepAudioWeight",
+        metavar="<int>",
+        type=int,
+        default=BEEP_AUDIO_WEIGHT_DEFAULT,
+        help=f"Mix weight for non-beeped audio (default: {BEEP_AUDIO_WEIGHT_DEFAULT})",
+    )
+    parser.add_argument(
+        "--beep-sine-weight",
+        dest="beepSineWeight",
+        metavar="<int>",
+        type=int,
+        default=BEEP_SINE_WEIGHT_DEFAULT,
+        help=f"Mix weight for beep (default: {BEEP_SINE_WEIGHT_DEFAULT})",
+    )
+    parser.add_argument(
+        "--beep-dropout-transition",
+        dest="beepDropTransition",
+        metavar="<int>",
+        type=int,
+        default=BEEP_DROPOUT_TRANSITION_DEFAULT,
+        help=f"Dropout transition for beep (default: {BEEP_DROPOUT_TRANSITION_DEFAULT})",
+    )
+
+    parser.add_argument(
         "--force",
         dest="forceDespiteTag",
         type=mmguero.str2bool,
@@ -926,6 +979,9 @@ def RunMonkeyPlug():
             padMsecPost=args.padMsecPost if args.padMsecPost > 0 else args.padMsec,
             beep=args.beep,
             beepHertz=args.beepHertz,
+            beepAudioWeight=args.beepAudioWeight,
+            beepSineWeight=args.beepSineWeight,
+            beepDropTransition=args.beepDropTransition,
             force=args.forceDespiteTag,
             dbug=args.debug,
         )
@@ -946,6 +1002,9 @@ def RunMonkeyPlug():
             padMsecPost=args.padMsecPost if args.padMsecPost > 0 else args.padMsec,
             beep=args.beep,
             beepHertz=args.beepHertz,
+            beepAudioWeight=args.beepAudioWeight,
+            beepSineWeight=args.beepSineWeight,
+            beepDropTransition=args.beepDropTransition,
             force=args.forceDespiteTag,
             dbug=args.debug,
         )
