@@ -7,7 +7,7 @@
 1. The user provides a local audio file (or a URL pointing to an audio file which is downloaded)
 2. Either [Whisper](https://openai.com/research/whisper) ([GitHub](https://github.com/openai/whisper)) or the [Vosk](https://alphacephei.com/vosk/)-[API](https://github.com/alphacep/vosk-api) is used to recognize speech in the audio file
 3. Each recognized word is checked against a [list](./src/monkeyplug/swears.txt) of profanity or other words you'd like muted
-4. [`ffmpeg`](https://www.ffmpeg.org/) is used to create a cleaned audio file, muting the objectional words
+4. [`ffmpeg`](https://www.ffmpeg.org/) is used to create a cleaned audio file, muting or "bleeping" the objectional words
 
 You can then use your favorite media player to play the cleaned audio file.
 
