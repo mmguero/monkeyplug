@@ -83,6 +83,8 @@ options:
                         Beep instead of silence
   -h <int>, --beep-hertz <int>
                         Beep frequency hertz (default: 1000)
+  --beep-mix-normalize [true|false]
+                        Normalize mix of audio and beeps (defaut: True)
   --beep-audio-weight <int>
                         Mix weight for non-beeped audio (default: 4)
   --beep-sine-weight <int>

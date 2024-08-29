@@ -44,6 +44,7 @@ AUDIO_MATCH_FORMAT = "MATCH"
 AUDIO_INTERMEDIATE_PARAMS = ["-c:a", "pcm_s16le", "-ac", "1", "-ar", "16000"]
 AUDIO_DEFAULT_WAV_FRAMES_CHUNK = 8000
 BEEP_HERTZ_DEFAULT = 1000
+BEEP_MIX_NORMALIZE_DEFAULT = True
 BEEP_AUDIO_WEIGHT_DEFAULT = 4
 BEEP_SINE_WEIGHT_DEFAULT = 1
 BEEP_DROPOUT_TRANSITION_DEFAULT = 0
@@ -214,6 +215,7 @@ class Plugger(object):
     padSecPost = 0.0
     beep = False
     beepHertz = BEEP_HERTZ_DEFAULT
+    beepMixNormalize = BEEP_MIX_NORMALIZE_DEFAULT
     beepAudioWeight = BEEP_AUDIO_WEIGHT_DEFAULT
     beepSineWeight = BEEP_SINE_WEIGHT_DEFAULT
     beepDropTransition = BEEP_DROPOUT_TRANSITION_DEFAULT
@@ -235,6 +237,7 @@ class Plugger(object):
         padMsecPost=0,
         beep=False,
         beepHertz=BEEP_HERTZ_DEFAULT,
+        beepMixNormalize=BEEP_MIX_NORMALIZE_DEFAULT,
         beepAudioWeight=BEEP_AUDIO_WEIGHT_DEFAULT,
         beepSineWeight=BEEP_SINE_WEIGHT_DEFAULT,
         beepDropTransition=BEEP_DROPOUT_TRANSITION_DEFAULT,
@@ -245,6 +248,7 @@ class Plugger(object):
         self.padSecPost = padMsecPost / 1000.0
         self.beep = beep
         self.beepHertz = beepHertz
+        self.beepMixNormalize = beepMixNormalize
         self.beepAudioWeight = beepAudioWeight
         self.beepSineWeight = beepSineWeight
         self.beepDropTransition = beepDropTransition
@@ -361,6 +365,7 @@ class Plugger(object):
             mmguero.eprint(f'Beep instead of mute: {self.beep}')
             if self.beep:
                 mmguero.eprint(f'Beep hertz: {self.beepHertz}')
+                mmguero.eprint(f'Beep mix normalization: {self.beepMixNormalize}')
                 mmguero.eprint(f'Beep audio weight: {self.beepAudioWeight}')
                 mmguero.eprint(f'Beep sine weight: {self.beepSineWeight}')
                 mmguero.eprint(f'Beep dropout transition: {self.beepDropTransition}')
@@ -436,7 +441,7 @@ class Plugger(object):
                         [f'[beep{i+1}]{val}[beep{i+1}_delayed]' for i, val in enumerate(self.beepDelayList)]
                     )
                     beepMixList = ''.join([f'[beep{i+1}_delayed]' for i in range(len(self.beepDelayList))])
-                    filterStr = f"[0:a]{muteTimeListStr}[mute];{sineTimeListStr};{beepDelayList};[mute]{beepMixList}amix=inputs={len(self.beepDelayList)+1}:dropout_transition={self.beepDropTransition}:weights={self.beepAudioWeight} {' '.join([str(self.beepSineWeight)] * len(self.beepDelayList))}"
+                    filterStr = f"[0:a]{muteTimeListStr}[mute];{sineTimeListStr};{beepDelayList};[mute]{beepMixList}amix=inputs={len(self.beepDelayList)+1}:normalize={str(self.beepMixNormalize).lower()}:dropout_transition={self.beepDropTransition}:weights={self.beepAudioWeight} {' '.join([str(self.beepSineWeight)] * len(self.beepDelayList))}"
                     audioArgs = ['-filter_complex', filterStr]
                 else:
                     audioArgs = ['-af', ",".join(self.muteTimeList)]
@@ -522,6 +527,7 @@ class VoskPlugger(Plugger):
         padMsecPost=0,
         beep=False,
         beepHertz=BEEP_HERTZ_DEFAULT,
+        beepMixNormalize=BEEP_MIX_NORMALIZE_DEFAULT,
         beepAudioWeight=BEEP_AUDIO_WEIGHT_DEFAULT,
         beepSineWeight=BEEP_SINE_WEIGHT_DEFAULT,
         beepDropTransition=BEEP_DROPOUT_TRANSITION_DEFAULT,
@@ -558,6 +564,7 @@ class VoskPlugger(Plugger):
             padMsecPost=padMsecPost,
             beep=beep,
             beepHertz=beepHertz,
+            beepMixNormalize=beepMixNormalize,
             beepAudioWeight=beepAudioWeight,
             beepSineWeight=beepSineWeight,
             beepDropTransition=beepDropTransition,
@@ -677,6 +684,7 @@ class WhisperPlugger(Plugger):
         padMsecPost=0,
         beep=False,
         beepHertz=BEEP_HERTZ_DEFAULT,
+        beepMixNormalize=BEEP_MIX_NORMALIZE_DEFAULT,
         beepAudioWeight=BEEP_AUDIO_WEIGHT_DEFAULT,
         beepSineWeight=BEEP_SINE_WEIGHT_DEFAULT,
         beepDropTransition=BEEP_DROPOUT_TRANSITION_DEFAULT,
@@ -703,6 +711,7 @@ class WhisperPlugger(Plugger):
             padMsecPost=padMsecPost,
             beep=beep,
             beepHertz=beepHertz,
+            beepMixNormalize=beepMixNormalize,
             beepAudioWeight=beepAudioWeight,
             beepSineWeight=beepSineWeight,
             beepDropTransition=beepDropTransition,
@@ -877,6 +886,16 @@ def RunMonkeyPlug():
         help=f"Beep frequency hertz (default: {BEEP_HERTZ_DEFAULT})",
     )
     parser.add_argument(
+        "--beep-mix-normalize",
+        dest="beepMixNormalize",
+        type=mmguero.str2bool,
+        nargs="?",
+        const=True,
+        default=BEEP_MIX_NORMALIZE_DEFAULT,
+        metavar="true|false",
+        help=f"Normalize mix of audio and beeps (defaut: {BEEP_MIX_NORMALIZE_DEFAULT})",
+    )
+    parser.add_argument(
         "--beep-audio-weight",
         dest="beepAudioWeight",
         metavar="<int>",
@@ -979,6 +998,7 @@ def RunMonkeyPlug():
             padMsecPost=args.padMsecPost if args.padMsecPost > 0 else args.padMsec,
             beep=args.beep,
             beepHertz=args.beepHertz,
+            beepMixNormalize=args.beepMixNormalize,
             beepAudioWeight=args.beepAudioWeight,
             beepSineWeight=args.beepSineWeight,
             beepDropTransition=args.beepDropTransition,
@@ -1002,6 +1022,7 @@ def RunMonkeyPlug():
             padMsecPost=args.padMsecPost if args.padMsecPost > 0 else args.padMsec,
             beep=args.beep,
             beepHertz=args.beepHertz,
+            beepMixNormalize=args.beepMixNormalize,
             beepAudioWeight=args.beepAudioWeight,
             beepSineWeight=args.beepSineWeight,
             beepDropTransition=args.beepDropTransition,
