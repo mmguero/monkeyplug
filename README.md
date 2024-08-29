@@ -2,7 +2,7 @@
 
 [![Latest Version](https://img.shields.io/pypi/v/monkeyplug)](https://pypi.python.org/pypi/monkeyplug/) [![VOSK Docker Images](https://github.com/mmguero/monkeyplug/workflows/monkeyplug-build-push-vosk-ghcr/badge.svg)](https://github.com/mmguero/monkeyplug/pkgs/container/monkeyplug) [![Whisper Docker Images](https://github.com/mmguero/monkeyplug/workflows/monkeyplug-build-push-whisper-ghcr/badge.svg)](https://github.com/mmguero/monkeyplug/pkgs/container/monkeyplug)
 
-**monkeyplug** is a little script to mute profanity in audio files (intended for podcasts, but YMMV) in a few simple steps:
+**monkeyplug** is a little script to censor profanity in audio files (intended for podcasts, but YMMV) in a few simple steps:
 
 1. The user provides a local audio file (or a URL pointing to an audio file which is downloaded)
 2. Either [Whisper](https://openai.com/research/whisper) ([GitHub](https://github.com/openai/whisper)) or the [Vosk](https://alphacephei.com/vosk/)-[API](https://github.com/alphacep/vosk-api) is used to recognize speech in the audio file
@@ -79,6 +79,10 @@ options:
                         Milliseconds to pad before muted segments (default: 0)
   --pad-milliseconds-post <int>
                         Milliseconds to pad after muted segments (default: 0)
+  -b [true|false], --beep [true|false]
+                        Beep instead of silence
+  -h <int>, --beep-hertz <int>
+                        Beep frequency hertz (default: 1000)
   --force [true|false]  Process file despite existence of embedded tag
 
 VOSK Options:

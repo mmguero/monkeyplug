@@ -43,6 +43,7 @@ AUDIO_DEFAULT_CHANNELS = 2
 AUDIO_MATCH_FORMAT = "MATCH"
 AUDIO_INTERMEDIATE_PARAMS = ["-c:a", "pcm_s16le", "-ac", "1", "-ar", "16000"]
 AUDIO_DEFAULT_WAV_FRAMES_CHUNK = 8000
+BEEP_HERTZ_DEFAULT = 1000
 SWEARS_FILENAME_DEFAULT = 'swears.txt'
 MUTAGEN_METADATA_TAGS = ['encodedby', 'comment']
 MUTAGEN_METADATA_TAG_VALUE = u'monkeyplug'
@@ -201,9 +202,15 @@ class Plugger(object):
     swearsMap = {}
     wordList = []
     naughtyWordList = []
+    # for beep and mute
     muteTimeList = []
+    # for beep only
+    sineTimeList = []
+    beepDelayList = []
     padSecPre = 0.0
     padSecPost = 0.0
+    beep = False
+    beepHertz = BEEP_HERTZ_DEFAULT
     forceDespiteTag = False
     aParams = None
     tags = None
@@ -220,11 +227,15 @@ class Plugger(object):
         aChannels=AUDIO_DEFAULT_CHANNELS,
         padMsecPre=0,
         padMsecPost=0,
+        beep=False,
+        beepHertz=BEEP_HERTZ_DEFAULT,
         force=False,
         dbug=False,
     ):
         self.padSecPre = padMsecPre / 1000.0
         self.padSecPost = padMsecPost / 1000.0
+        self.beep = beep
+        self.beepHertz = beepHertz
         self.forceDespiteTag = force
         self.debug = dbug
         self.outputJson = outputJson
@@ -335,6 +346,8 @@ class Plugger(object):
             mmguero.eprint(f'Encode parameters: {self.aParams}')
             mmguero.eprint(f'Profanity file: {self.swearsFileSpec}')
             mmguero.eprint(f'Intermediate downloaded file: {self.tmpDownloadedFileSpec}')
+            mmguero.eprint(f'Beep instead of mute: {self.beep}')
+            mmguero.eprint(f'Beep hertz: {self.beepHertz}')
             mmguero.eprint(f'Force despite tags: {self.forceDespiteTag}')
 
     ######## del ##################################################################
@@ -365,28 +378,32 @@ class Plugger(object):
             mmguero.eprint(self.naughtyWordList)
 
         self.muteTimeList = []
+        self.sineTimeList = []
+        self.beepDelayList = []
         for word, wordPeek in pairwise(self.naughtyWordList):
-            self.muteTimeList.append(
-                "afade=enable='between(t,"
-                + format(word["start"] - self.padSecPre, ".3f")
-                + ","
-                + format(word["end"] + self.padSecPost, ".3f")
-                + ")':t=out:st="
-                + format(word["start"] - self.padSecPre, ".3f")
-                + ":d=5ms"
-            )
-            self.muteTimeList.append(
-                "afade=enable='between(t,"
-                + format(word["end"] + self.padSecPost, ".3f")
-                + ","
-                + format(wordPeek["start"] - self.padSecPre, ".3f")
-                + ")':t=in:st="
-                + format(word["end"] + self.padSecPost, ".3f")
-                + ":d=5ms"
-            )
+            wordStart = format(word["start"] - self.padSecPre, ".3f")
+            wordEnd = format(word["end"] + self.padSecPost, ".3f")
+            wordDuration = format(float(wordEnd) - float(wordStart), ".3f")
+            wordPeekStart = format(wordPeek["start"] - self.padSecPre, ".3f")
+            if self.beep:
+                self.muteTimeList.append(f"volume=enable='between(t,{wordStart},{wordEnd})':volume=0")
+                self.sineTimeList.append(f"sine=f={self.beepHertz}:duration={wordDuration}")
+                self.beepDelayList.append(
+                    f"atrim=0:{wordDuration},adelay={'|'.join([str(int(float(wordStart) * 1000))] * 2)}"
+                )
+            else:
+                self.muteTimeList.append(
+                    "afade=enable='between(t," + wordStart + "," + wordEnd + ")':t=out:st=" + wordStart + ":d=5ms"
+                )
+                self.muteTimeList.append(
+                    "afade=enable='between(t," + wordEnd + "," + wordPeekStart + ")':t=in:st=" + wordEnd + ":d=5ms"
+                )
 
         if self.debug:
             mmguero.eprint(self.muteTimeList)
+            if self.beep:
+                mmguero.eprint(self.sineTimeList)
+                mmguero.eprint(self.beepDelayList)
 
         return self.muteTimeList
 
@@ -396,7 +413,17 @@ class Plugger(object):
             self.CreateCleanMuteList()
 
             if len(self.muteTimeList) > 0:
-                audioArgs = ['-af', ",".join(self.muteTimeList)]
+                if self.beep:
+                    muteTimeListStr = ','.join(self.muteTimeList)
+                    sineTimeListStr = ';'.join([f'{val}[beep{i+1}]' for i, val in enumerate(self.sineTimeList)])
+                    beepDelayList = ';'.join(
+                        [f'[beep{i+1}]{val}[beep{i+1}_delayed]' for i, val in enumerate(self.beepDelayList)]
+                    )
+                    beepMixList = ''.join([f'[beep{i+1}_delayed]' for i in range(len(self.beepDelayList))])
+                    filterStr = f"[0:a]{muteTimeListStr}[mute];{sineTimeListStr};{beepDelayList};[mute]{beepMixList}amix=inputs={len(self.beepDelayList)+1}"
+                    audioArgs = ['-filter_complex', filterStr]
+                else:
+                    audioArgs = ['-af', ",".join(self.muteTimeList)]
             else:
                 audioArgs = []
 
@@ -477,6 +504,8 @@ class VoskPlugger(Plugger):
         wChunk=AUDIO_DEFAULT_WAV_FRAMES_CHUNK,
         padMsecPre=0,
         padMsecPost=0,
+        beep=False,
+        beepHertz=BEEP_HERTZ_DEFAULT,
         force=False,
         dbug=False,
     ):
@@ -508,6 +537,8 @@ class VoskPlugger(Plugger):
             aChannels=aChannels,
             padMsecPre=padMsecPre,
             padMsecPost=padMsecPost,
+            beep=beep,
+            beepHertz=beepHertz,
             force=force,
             dbug=dbug,
         )
@@ -622,6 +653,8 @@ class WhisperPlugger(Plugger):
         aChannels=AUDIO_DEFAULT_CHANNELS,
         padMsecPre=0,
         padMsecPost=0,
+        beep=False,
+        beepHertz=BEEP_HERTZ_DEFAULT,
         force=False,
         dbug=False,
     ):
@@ -643,6 +676,8 @@ class WhisperPlugger(Plugger):
             aChannels=aChannels,
             padMsecPre=padMsecPre,
             padMsecPost=padMsecPost,
+            beep=beep,
+            beepHertz=beepHertz,
             force=force,
             dbug=dbug,
         )
@@ -794,6 +829,26 @@ def RunMonkeyPlug():
         help=f"Milliseconds to pad after muted segments (default: 0)",
     )
     parser.add_argument(
+        "-b",
+        "--beep",
+        dest="beep",
+        type=mmguero.str2bool,
+        nargs="?",
+        const=True,
+        default=False,
+        metavar="true|false",
+        help="Beep instead of silence",
+    )
+    parser.add_argument(
+        "-h",
+        "--beep-hertz",
+        dest="beepHertz",
+        metavar="<int>",
+        type=int,
+        default=BEEP_HERTZ_DEFAULT,
+        help=f"Beep frequency hertz (default: {BEEP_HERTZ_DEFAULT})",
+    )
+    parser.add_argument(
         "--force",
         dest="forceDespiteTag",
         type=mmguero.str2bool,
@@ -869,6 +924,8 @@ def RunMonkeyPlug():
             wChunk=args.voskReadFramesChunk,
             padMsecPre=args.padMsecPre if args.padMsecPre > 0 else args.padMsec,
             padMsecPost=args.padMsecPost if args.padMsecPost > 0 else args.padMsec,
+            beep=args.beep,
+            beepHertz=args.beepHertz,
             force=args.forceDespiteTag,
             dbug=args.debug,
         )
@@ -887,6 +944,8 @@ def RunMonkeyPlug():
             aChannels=args.aChannels,
             padMsecPre=args.padMsecPre if args.padMsecPre > 0 else args.padMsec,
             padMsecPost=args.padMsecPost if args.padMsecPost > 0 else args.padMsec,
+            beep=args.beep,
+            beepHertz=args.beepHertz,
             force=args.forceDespiteTag,
             dbug=args.debug,
         )
