@@ -893,7 +893,7 @@ def RunMonkeyPlug():
         const=True,
         default=BEEP_MIX_NORMALIZE_DEFAULT,
         metavar="true|false",
-        help=f"Normalize mix of audio and beeps (defaut: {BEEP_MIX_NORMALIZE_DEFAULT})",
+        help=f"Normalize mix of audio and beeps (default: {BEEP_MIX_NORMALIZE_DEFAULT})",
     )
     parser.add_argument(
         "--beep-audio-weight",
