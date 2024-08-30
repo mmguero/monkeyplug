@@ -84,9 +84,9 @@ options:
   -h <int>, --beep-hertz <int>
                         Beep frequency hertz (default: 1000)
   --beep-mix-normalize [true|false]
-                        Normalize mix of audio and beeps (default: True)
+                        Normalize mix of audio and beeps (default: False)
   --beep-audio-weight <int>
-                        Mix weight for non-beeped audio (default: 4)
+                        Mix weight for non-beeped audio (default: 1)
   --beep-sine-weight <int>
                         Mix weight for beep (default: 1)
   --beep-dropout-transition <int>
