@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-MONKEYPLUG_IMAGE="${MONKEYPLUG_IMAGE:-oci.guero.top/monkeyplug:vosk-small}"
+MONKEYPLUG_IMAGE="${MONKEYPLUG_IMAGE:-oci.guero.org/monkeyplug:vosk-small}"
 CONTAINER_ENGINE="${CONTAINER_ENGINE:-docker}"
 
 DEVICE_ARGS=()
