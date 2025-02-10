@@ -1,6 +1,6 @@
 """monkeyplug is a little script to censor profanity in audio files."""
 
-__version__ = "2.1.3"
+__version__ = "2.1.4"
 __author__ = "Seth Grover <mero.mero.guero@gmail.com>"
 __all__ = []
 

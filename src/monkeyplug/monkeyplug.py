@@ -61,6 +61,7 @@ DEFAULT_WHISPER_MODEL_DIR = os.getenv(
     "WHISPER_MODEL_DIR", os.path.join(os.path.join(os.path.join(os.path.expanduser("~"), '.cache'), 'whisper'))
 )
 DEFAULT_WHISPER_MODEL_NAME = os.getenv("WHISPER_MODEL_NAME", "small.en")
+DEFAULT_TORCH_THREADS = 0
 
 ###################################################################################################
 script_name = os.path.basename(__file__)
@@ -666,6 +667,7 @@ class VoskPlugger(Plugger):
 class WhisperPlugger(Plugger):
     debug = False
     model = None
+    torch = None
     whisper = None
     transcript = None
 
@@ -677,6 +679,7 @@ class WhisperPlugger(Plugger):
         iSwearsFileSpec,
         mDir,
         mName,
+        torchThreads,
         outputJson,
         aParams=None,
         aChannels=AUDIO_DEFAULT_CHANNELS,
@@ -691,6 +694,11 @@ class WhisperPlugger(Plugger):
         force=False,
         dbug=False,
     ):
+        if (torchThreads > 0):
+            self.torch = mmguero.DoDynamicImport("torch", "torch", debug=dbug)
+            if self.torch:
+                self.torch.set_num_threads(torchThreads)
+
         self.whisper = mmguero.DoDynamicImport("whisper", "openai-whisper", debug=dbug)
         if not self.whisper:
             raise Exception("Unable to initialize Whisper API")
@@ -966,6 +974,14 @@ def RunMonkeyPlug():
         default=DEFAULT_WHISPER_MODEL_NAME,
         help=f"Whisper model name ({DEFAULT_WHISPER_MODEL_NAME})",
     )
+    whisperArgGroup.add_argument(
+        "--torch-threads",
+        dest="torchThreads",
+        metavar="<int>",
+        type=int,
+        default=DEFAULT_TORCH_THREADS,
+        help=f"Number of threads used by torch for CPU inference ({DEFAULT_TORCH_THREADS})",
+    )
 
     try:
         parser.error = parser.exit
@@ -1015,6 +1031,7 @@ def RunMonkeyPlug():
             args.swears,
             args.whisperModelDir,
             args.whisperModelName,
+            args.torchThreads,
             args.outputJson,
             aParams=args.aParams,
             aChannels=args.aChannels,
