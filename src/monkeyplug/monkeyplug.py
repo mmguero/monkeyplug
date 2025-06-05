@@ -141,9 +141,9 @@ def SetMonkeyplugTag(local_filename, debug=False):
                     mut[tag] = MUTAGEN_METADATA_TAG_VALUE
                     result = True
                     break
-                except mutagen.MutagenError as me:
+                except Exception as e:
                     if debug:
-                        mmguero.eprint(me)
+                        mmguero.eprint(e)
             if result:
                 try:
                     mut.save(local_filename)
