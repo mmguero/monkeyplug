@@ -20,14 +20,16 @@ from itertools import tee
 
 ###################################################################################################
 CHANNELS_REPLACER = 'CHANNELS'
+SAMPLE_RATE_REPLACER = 'SAMPLE'
 AUDIO_DEFAULT_PARAMS_BY_FORMAT = {
-    "flac": ["-c:a", "flac", "-ar", "44100", "-ac", CHANNELS_REPLACER],
-    "m4a": ["-c:a", "aac", "-b:a", "128K", "-ar", "44100", "-ac", CHANNELS_REPLACER],
-    "aac": ["-c:a", "aac", "-b:a", "128K", "-ar", "44100", "-ac", CHANNELS_REPLACER],
-    "mp3": ["-c:a", "libmp3lame", "-b:a", "128K", "-ar", "44100", "-ac", CHANNELS_REPLACER],
-    "ogg": ["-c:a", "libvorbis", "-qscale:a", "5", "-ar", "44100", "-ac", CHANNELS_REPLACER],
-    "opus": ["-c:a", "libopus", "-b:a", "128K", "-ar", "48000", "-ac", CHANNELS_REPLACER],
-    "ac3": ["-c:a", "ac3", "-b:a", "128K", "-ar", "44100", "-ac", CHANNELS_REPLACER],
+    "flac": ["-c:a", "flac", "-ar", SAMPLE_RATE_REPLACER, "-ac", CHANNELS_REPLACER],
+    "m4a": ["-c:a", "aac", "-b:a", "128K", "-ar", SAMPLE_RATE_REPLACER, "-ac", CHANNELS_REPLACER],
+    "aac": ["-c:a", "aac", "-b:a", "128K", "-ar", SAMPLE_RATE_REPLACER, "-ac", CHANNELS_REPLACER],
+    "mp3": ["-c:a", "libmp3lame", "-b:a", "128K", "-ar", SAMPLE_RATE_REPLACER, "-ac", CHANNELS_REPLACER],
+    "ogg": ["-c:a", "libvorbis", "-qscale:a", "5", "-ar", SAMPLE_RATE_REPLACER, "-ac", CHANNELS_REPLACER],
+    "opus": ["-c:a", "libopus", "-b:a", "128K", "-ar", SAMPLE_RATE_REPLACER, "-ac", CHANNELS_REPLACER],
+    "ac3": ["-c:a", "ac3", "-b:a", "128K", "-ar", SAMPLE_RATE_REPLACER, "-ac", CHANNELS_REPLACER],
+    "wav": ["-c:a", "pcm_s16le", "-ar", SAMPLE_RATE_REPLACER, "-ac", CHANNELS_REPLACER],
 }
 AUDIO_CODEC_TO_FORMAT = {
     "aac": "m4a",
@@ -36,10 +38,12 @@ AUDIO_CODEC_TO_FORMAT = {
     "mp3": "mp3",
     "opus": "opus",
     "vorbis": "ogg",
+    "pcm_s16le": "wav",
 }
 
 AUDIO_DEFAULT_FORMAT = "mp3"
 AUDIO_DEFAULT_CHANNELS = 2
+AUDIO_DEFAULT_SAMPLE_RATE = 48000
 AUDIO_MATCH_FORMAT = "MATCH"
 AUDIO_INTERMEDIATE_PARAMS = ["-c:a", "pcm_s16le", "-ac", "1", "-ar", "16000"]
 AUDIO_DEFAULT_WAV_FRAMES_CHUNK = 8000
@@ -234,6 +238,7 @@ class Plugger(object):
         outputJson,
         aParams=None,
         aChannels=AUDIO_DEFAULT_CHANNELS,
+        aSampleRate=AUDIO_DEFAULT_SAMPLE_RATE,
         padMsecPre=0,
         padMsecPost=0,
         beep=False,
@@ -323,7 +328,13 @@ class Plugger(object):
             if self.aParams.startswith("base64:"):
                 self.aParams = base64.b64decode(self.aParams[7:]).decode("utf-8")
             self.aParams = self.aParams.split(' ')
-        self.aParams = [str(aChannels) if aParam == CHANNELS_REPLACER else aParam for aParam in self.aParams]
+        self.aParams = [
+            {
+                CHANNELS_REPLACER: str(aChannels),
+                SAMPLE_RATE_REPLACER: str(aSampleRate),
+            }.get(aParam, aParam)
+            for aParam in self.aParams
+        ]
 
         # if we're actually just replacing the audio stream(s) inside a video file, the actual output file is still a video file
         self.outputVideoFileFormat = (
@@ -523,6 +534,7 @@ class VoskPlugger(Plugger):
         outputJson,
         aParams=None,
         aChannels=AUDIO_DEFAULT_CHANNELS,
+        aSampleRate=AUDIO_DEFAULT_SAMPLE_RATE,
         wChunk=AUDIO_DEFAULT_WAV_FRAMES_CHUNK,
         padMsecPre=0,
         padMsecPost=0,
@@ -561,6 +573,7 @@ class VoskPlugger(Plugger):
             outputJson=outputJson,
             aParams=aParams,
             aChannels=aChannels,
+            aSampleRate=aSampleRate,
             padMsecPre=padMsecPre,
             padMsecPost=padMsecPost,
             beep=beep,
@@ -683,6 +696,7 @@ class WhisperPlugger(Plugger):
         outputJson,
         aParams=None,
         aChannels=AUDIO_DEFAULT_CHANNELS,
+        aSampleRate=AUDIO_DEFAULT_SAMPLE_RATE,
         padMsecPre=0,
         padMsecPost=0,
         beep=False,
@@ -694,7 +708,7 @@ class WhisperPlugger(Plugger):
         force=False,
         dbug=False,
     ):
-        if (torchThreads > 0):
+        if torchThreads > 0:
             self.torch = mmguero.DoDynamicImport("torch", "torch", debug=dbug)
             if self.torch:
                 self.torch.set_num_threads(torchThreads)
@@ -715,6 +729,7 @@ class WhisperPlugger(Plugger):
             outputJson=outputJson,
             aParams=aParams,
             aChannels=aChannels,
+            aSampleRate=aSampleRate,
             padMsecPre=padMsecPre,
             padMsecPost=padMsecPost,
             beep=beep,
@@ -838,6 +853,15 @@ def RunMonkeyPlug():
         type=int,
         default=AUDIO_DEFAULT_CHANNELS,
         help=f"Audio output channels (default: {AUDIO_DEFAULT_CHANNELS})",
+    )
+    parser.add_argument(
+        "-s",
+        "--sample-rate",
+        dest="aSampleRate",
+        metavar="<int>",
+        type=int,
+        default=AUDIO_DEFAULT_SAMPLE_RATE,
+        help=f"Audio output sample rate (default: {AUDIO_DEFAULT_SAMPLE_RATE})",
     )
     parser.add_argument(
         "-f",
@@ -1009,6 +1033,7 @@ def RunMonkeyPlug():
             args.outputJson,
             aParams=args.aParams,
             aChannels=args.aChannels,
+            aSampleRate=args.aSampleRate,
             wChunk=args.voskReadFramesChunk,
             padMsecPre=args.padMsecPre if args.padMsecPre > 0 else args.padMsec,
             padMsecPost=args.padMsecPost if args.padMsecPost > 0 else args.padMsec,
@@ -1035,6 +1060,7 @@ def RunMonkeyPlug():
             args.outputJson,
             aParams=args.aParams,
             aChannels=args.aChannels,
+            aSampleRate=args.aSampleRate,
             padMsecPre=args.padMsecPre if args.padMsecPre > 0 else args.padMsec,
             padMsecPost=args.padMsecPost if args.padMsecPost > 0 else args.padMsec,
             beep=args.beep,

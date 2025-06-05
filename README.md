@@ -55,23 +55,22 @@ usage: monkeyplug.py <arguments>
 monkeyplug.py
 
 options:
-  -v [true|false], --verbose [true|false]
+  -v, --verbose [true|false]
                         Verbose/debug output
-  -m <string>, --mode <string>
-                        Speech recognition engine (whisper|vosk) (default: whisper)
-  -i <string>, --input <string>
-                        Input file (or URL)
-  -o <string>, --output <string>
+  -m, --mode <string>   Speech recognition engine (whisper|vosk) (default: whisper)
+  -i, --input <string>  Input file (or URL)
+  -o, --output <string>
                         Output file
   --output-json <string>
                         Output file to store transcript JSON
-  -w <profanity file>, --swears <profanity file>
+  -w, --swears <profanity file>
                         text file containing profanity (default: "swears.txt")
-  -a APARAMS, --audio-params APARAMS
+  -a, --audio-params APARAMS
                         Audio parameters for ffmpeg (default depends on output audio codec)
-  -c <int>, --channels <int>
-                        Audio output channels (default: 2)
-  -f <string>, --format <string>
+  -c, --channels <int>  Audio output channels (default: 2)
+  -s, --sample-rate <int>
+                        Audio output sample rate (default: 48000)
+  -f, --format <string>
                         Output file format (default: inferred from extension of --output, or "MATCH")
   --pad-milliseconds <int>
                         Milliseconds to pad on either side of muted segments (default: 0)
@@ -79,9 +78,9 @@ options:
                         Milliseconds to pad before muted segments (default: 0)
   --pad-milliseconds-post <int>
                         Milliseconds to pad after muted segments (default: 0)
-  -b [true|false], --beep [true|false]
+  -b, --beep [true|false]
                         Beep instead of silence
-  -h <int>, --beep-hertz <int>
+  -h, --beep-hertz <int>
                         Beep frequency hertz (default: 1000)
   --beep-mix-normalize [true|false]
                         Normalize mix of audio and beeps (default: False)
@@ -103,7 +102,9 @@ Whisper Options:
   --whisper-model-dir <string>
                         Whisper model directory (~/.cache/whisper)
   --whisper-model-name <string>
-                        Whisper model name (small.en)
+                        Whisper model name (base.en)
+  --torch-threads <int>
+                        Number of threads used by torch for CPU inference (0)
 ```
 
 ### Docker
