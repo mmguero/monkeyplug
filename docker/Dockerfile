@@ -1,5 +1,5 @@
 ########################################################################################################################
-FROM python:3-slim as base
+FROM python:3.10-slim as base
 
 ENV DEBIAN_FRONTEND noninteractive
 ENV TERM xterm
