@@ -96,7 +96,7 @@ def DownloadToFile(url, local_filename=None, chunk_bytes=4096, debug=False):
     fSize = os.path.getsize(tmpDownloadedFileSpec)
     if debug:
         mmguero.eprint(
-            f"Download of {url} to {tmpDownloadedFileSpec} {'succeeded' if fExists else 'failed'} ({mmguero.SizeHumanFormat(fSize)})"
+            f"Download of {url} to {tmpDownloadedFileSpec} {'succeeded' if fExists else 'failed'} ({mmguero.size_human_format(fSize)})"
         )
 
     if fExists and (fSize > 0):
@@ -118,7 +118,7 @@ def GetMonkeyplugTagged(local_filename, debug=False):
         if hasattr(mut, 'get'):
             for tag in MUTAGEN_METADATA_TAGS:
                 try:
-                    if MUTAGEN_METADATA_TAG_VALUE in mmguero.GetIterable(mut.get(tag, default=())):
+                    if MUTAGEN_METADATA_TAG_VALUE in mmguero.get_iterable(mut.get(tag, default=())):
                         result = True
                         break
                 except Exception as e:
@@ -172,9 +172,9 @@ def GetCodecs(local_filename, debug=False):
             '-show_streams',
             local_filename,
         ]
-        ffprobeResult, ffprobeOutput = mmguero.RunProcess(ffprobeCmd, stdout=True, stderr=False, debug=debug)
+        ffprobeResult, ffprobeOutput = mmguero.run_process(ffprobeCmd, stdout=True, stderr=False, debug=debug)
         if ffprobeResult == 0:
-            ffprobeOutput = mmguero.LoadStrIfJson(' '.join(ffprobeOutput))
+            ffprobeOutput = mmguero.load_str_if_json(' '.join(ffprobeOutput))
             if 'streams' in ffprobeOutput:
                 for stream in ffprobeOutput['streams']:
                     if 'codec_name' in stream and 'codec_type' in stream:
@@ -184,11 +184,11 @@ def GetCodecs(local_filename, debug=False):
                             result[cType].add(cValue)
                         else:
                             result[cType] = set([cValue])
-            result['format'] = mmguero.DeepGet(ffprobeOutput, ['format', 'format_name'])
+            result['format'] = mmguero.deep_get(ffprobeOutput, ['format', 'format_name'])
             if isinstance(result['format'], str):
                 result['format'] = result['format'].split(',')
         else:
-            mmguero.eprint(' '.join(mmguero.Flatten(ffprobeCmd)))
+            mmguero.eprint(' '.join(mmguero.flatten(ffprobeCmd)))
             mmguero.eprint(ffprobeResult)
             mmguero.eprint(ffprobeOutput)
             raise ValueError(f"Could not analyze {local_filename}")
@@ -298,7 +298,7 @@ class Plugger(object):
             elif str(inputFormat).lower() in AUDIO_DEFAULT_PARAMS_BY_FORMAT:
                 self.outputFileSpec = self.outputFileSpec + '.' + inputFormat.lower()
             else:
-                for codec in mmguero.GetIterable(self.inputCodecs.get('audio', [])):
+                for codec in mmguero.get_iterable(self.inputCodecs.get('audio', [])):
                     if codec.lower() in AUDIO_CODEC_TO_FORMAT:
                         self.outputFileSpec = self.outputFileSpec + '.' + AUDIO_CODEC_TO_FORMAT[codec.lower()]
                         break
@@ -340,7 +340,7 @@ class Plugger(object):
         self.outputVideoFileFormat = (
             self.inputFileParts[1]
             if (
-                (len(mmguero.GetIterable(self.inputCodecs.get('video', []))) > 0)
+                (len(mmguero.get_iterable(self.inputCodecs.get('video', []))) > 0)
                 and (str(oAudioFileFormat).upper() == AUDIO_MATCH_FORMAT)
             )
             else ''
@@ -499,9 +499,9 @@ class Plugger(object):
                     self.aParams,
                     self.outputFileSpec,
                 ]
-            ffmpegResult, ffmpegOutput = mmguero.RunProcess(ffmpegCmd, stdout=True, stderr=True, debug=self.debug)
+            ffmpegResult, ffmpegOutput = mmguero.run_process(ffmpegCmd, stdout=True, stderr=True, debug=self.debug)
             if (ffmpegResult != 0) or (not os.path.isfile(self.outputFileSpec)):
-                mmguero.eprint(' '.join(mmguero.Flatten(ffmpegCmd)))
+                mmguero.eprint(' '.join(mmguero.flatten(ffmpegCmd)))
                 mmguero.eprint(ffmpegResult)
                 mmguero.eprint(ffmpegOutput)
                 raise ValueError(f"Could not process {self.inputFileSpec}")
@@ -559,7 +559,7 @@ class VoskPlugger(Plugger):
                 mDir,
             )
 
-        self.vosk = mmguero.DoDynamicImport("vosk", "vosk", debug=dbug)
+        self.vosk = mmguero.dynamic_import("vosk", "vosk", debug=dbug)
         if not self.vosk:
             raise Exception(f"Unable to initialize VOSK API")
         if not dbug:
@@ -616,9 +616,9 @@ class VoskPlugger(Plugger):
             AUDIO_INTERMEDIATE_PARAMS,
             self.tmpWavFileSpec,
         ]
-        ffmpegResult, ffmpegOutput = mmguero.RunProcess(ffmpegCmd, stdout=True, stderr=True, debug=self.debug)
+        ffmpegResult, ffmpegOutput = mmguero.run_process(ffmpegCmd, stdout=True, stderr=True, debug=self.debug)
         if (ffmpegResult != 0) or (not os.path.isfile(self.tmpWavFileSpec)):
-            mmguero.eprint(' '.join(mmguero.Flatten(ffmpegCmd)))
+            mmguero.eprint(' '.join(mmguero.flatten(ffmpegCmd)))
             mmguero.eprint(ffmpegResult)
             mmguero.eprint(ffmpegOutput)
             raise ValueError(
@@ -650,7 +650,7 @@ class VoskPlugger(Plugger):
                     if "result" in res:
                         self.wordList.extend(
                             [
-                                dict(r, **{'scrub': scrubword(mmguero.DeepGet(r, ["word"])) in self.swearsMap})
+                                dict(r, **{'scrub': scrubword(mmguero.deep_get(r, ["word"])) in self.swearsMap})
                                 for r in res["result"]
                             ]
                         )
@@ -658,7 +658,7 @@ class VoskPlugger(Plugger):
             if "result" in res:
                 self.wordList.extend(
                     [
-                        dict(r, **{'scrub': scrubword(mmguero.DeepGet(r, ["word"])) in self.swearsMap})
+                        dict(r, **{'scrub': scrubword(mmguero.deep_get(r, ["word"])) in self.swearsMap})
                         for r in res["result"]
                     ]
                 )
@@ -709,11 +709,11 @@ class WhisperPlugger(Plugger):
         dbug=False,
     ):
         if torchThreads > 0:
-            self.torch = mmguero.DoDynamicImport("torch", "torch", debug=dbug)
+            self.torch = mmguero.dynamic_import("torch", "torch", debug=dbug)
             if self.torch:
                 self.torch.set_num_threads(torchThreads)
 
-        self.whisper = mmguero.DoDynamicImport("whisper", "openai-whisper", debug=dbug)
+        self.whisper = mmguero.dynamic_import("whisper", "openai-whisper", debug=dbug)
         if not self.whisper:
             raise Exception("Unable to initialize Whisper API")
 
