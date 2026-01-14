@@ -306,7 +306,12 @@ class Plugger(object):
         self.outputFileSpec = oFileSpec if oFileSpec else self.inputFileParts[0] + "_clean"
         if self.outputFileSpec:
             outParts = os.path.splitext(self.outputFileSpec)
-            if ((not oAudioFileFormat) or (str(oAudioFileFormat).upper() == AUDIO_MATCH_FORMAT)) and oFileSpec:
+            if (
+                ((not oAudioFileFormat) or (str(oAudioFileFormat).upper() == AUDIO_MATCH_FORMAT))
+                and oFileSpec
+                and (len(outParts) > 1)
+                and outParts[1]
+            ):
                 oAudioFileFormat = outParts[1]
 
         if str(oAudioFileFormat).upper() == AUDIO_MATCH_FORMAT:
