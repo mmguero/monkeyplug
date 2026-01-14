@@ -1,7 +1,21 @@
-"""monkeyplug is a little script to censor profanity in audio files."""
+"""monkeyplug - a little script to censor profanity in audio files"""
 
-__version__ = "2.1.6"
-__author__ = "Seth Grover <mero.mero.guero@gmail.com>"
-__all__ = []
+from importlib.metadata import version, PackageNotFoundError
 
-from monkeyplug.monkeyplug import *
+_package_name = __name__
+
+try:
+    __version__ = version(_package_name)
+except PackageNotFoundError:
+    __version__ = None
+
+from .monkeyplug import *  # noqa: F401
+
+__all__ = sorted(
+    [
+        name
+        for name, obj in globals().items()
+        if not name.startswith("_") and getattr(obj, "__module__", _package_name).startswith(_package_name + '.')
+    ],
+    key=str.casefold,
+)

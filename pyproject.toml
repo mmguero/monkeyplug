@@ -1,6 +1,38 @@
 [build-system]
-requires = [
-    "setuptools>=42",
-    "wheel"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "monkeyplug"
+version = "2.1.7"
+authors = [
+  { name="Seth Grover", email="mero.mero.guero@gmail.com" },
 ]
-build-backend = "setuptools.build_meta"
+description = "monkeyplug is a little script to censor profanity in audio files."
+readme = "README.md"
+requires-python = ">=3.6"
+classifiers = [
+    "License :: OSI Approved :: BSD License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Sound/Audio :: Speech"
+]
+dependencies = [
+    "mmguero==2.0.3",
+    "mutagen==1.47.0",
+    "requests==2.32.5"
+]
+
+[project.urls]
+Homepage = "https://github.com/mmguero/monkeyplug"
+Issues = "https://github.com/mmguero/monkeyplug/issues"
+Repository = "https://github.com/mmguero/monkeyplug.git"
+
+[project.scripts]
+monkeyplug = "monkeyplug:RunMonkeyPlug"
+
+[tool.pytest.ini_options]
+pythonpath = "src"
+addopts = [
+    "--import-mode=importlib",
+]

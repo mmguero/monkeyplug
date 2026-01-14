@@ -4,6 +4,9 @@
 import argparse
 import base64
 import errno
+import importlib
+import importlib.metadata
+import importlib.util
 import json
 import mmguero
 import mutagen
@@ -561,7 +564,7 @@ class VoskPlugger(Plugger):
 
         self.vosk = mmguero.dynamic_import("vosk", "vosk", debug=dbug)
         if not self.vosk:
-            raise Exception(f"Unable to initialize VOSK API")
+            raise Exception("Unable to initialize VOSK API")
         if not dbug:
             self.vosk.SetLogLevel(-1)
 
@@ -777,10 +780,18 @@ class WhisperPlugger(Plugger):
 ###################################################################################################
 # RunMonkeyPlug
 def RunMonkeyPlug():
+
+    package_name = __package__ or "monkeyplug"
+    try:
+        metadata = importlib.metadata.metadata(package_name)
+        version = metadata.get("Version", "unknown")
+    except importlib.metadata.PackageNotFoundError:
+        version = "source"
+
     parser = argparse.ArgumentParser(
-        description=script_name,
-        add_help=False,
-        usage="{} <arguments>".format(script_name),
+        description="{} (v{})".format(package_name, version),
+        add_help=True,
+        usage="{} <arguments>".format(package_name),
     )
     parser.add_argument(
         "-v",
@@ -841,7 +852,7 @@ def RunMonkeyPlug():
     parser.add_argument(
         "-a",
         "--audio-params",
-        help=f"Audio parameters for ffmpeg (default depends on output audio codec)",
+        help="Audio parameters for ffmpeg (default depends on output audio codec)",
         dest="aParams",
         default=None,
     )
@@ -879,7 +890,7 @@ def RunMonkeyPlug():
         metavar="<int>",
         type=int,
         default=0,
-        help=f"Milliseconds to pad on either side of muted segments (default: 0)",
+        help="Milliseconds to pad on either side of muted segments (default: 0)",
     )
     parser.add_argument(
         "--pad-milliseconds-pre",
@@ -887,7 +898,7 @@ def RunMonkeyPlug():
         metavar="<int>",
         type=int,
         default=0,
-        help=f"Milliseconds to pad before muted segments (default: 0)",
+        help="Milliseconds to pad before muted segments (default: 0)",
     )
     parser.add_argument(
         "--pad-milliseconds-post",
@@ -895,7 +906,7 @@ def RunMonkeyPlug():
         metavar="<int>",
         type=int,
         default=0,
-        help=f"Milliseconds to pad after muted segments (default: 0)",
+        help="Milliseconds to pad after muted segments (default: 0)",
     )
     parser.add_argument(
         "-b",
@@ -909,7 +920,7 @@ def RunMonkeyPlug():
         help="Beep instead of silence",
     )
     parser.add_argument(
-        "-h",
+        "-z",
         "--beep-hertz",
         dest="beepHertz",
         metavar="<int>",
@@ -1010,10 +1021,8 @@ def RunMonkeyPlug():
     try:
         parser.error = parser.exit
         args = parser.parse_args()
-    except SystemExit as sy:
-        mmguero.eprint(sy)
-        parser.print_help()
-        exit(2)
+    except SystemExit:
+        exit(0)
 
     if args.debug:
         mmguero.eprint(os.path.join(script_path, script_name))
@@ -1076,6 +1085,8 @@ def RunMonkeyPlug():
         raise ValueError(f"Unsupported speech recognition engine {args.speechRecMode}")
 
     print(plug.EncodeCleanAudio())
+
+    sys.exit(0)
 
 
 ###################################################################################################
