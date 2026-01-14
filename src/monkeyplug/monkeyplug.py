@@ -789,9 +789,9 @@ def RunMonkeyPlug():
         version = "source"
 
     parser = argparse.ArgumentParser(
-        description="{} (v{})".format(package_name, version),
+        description=f"{package_name} (v{version})",
         add_help=True,
-        usage="{} <arguments>".format(package_name),
+        usage=f"{package_name} <arguments>",
     )
     parser.add_argument(
         "-v",
@@ -1021,13 +1021,14 @@ def RunMonkeyPlug():
     try:
         parser.error = parser.exit
         args = parser.parse_args()
-    except SystemExit:
-        exit(0)
+    except SystemExit as se:
+        mmguero.eprint(se)
+        exit(2)
 
     if args.debug:
         mmguero.eprint(os.path.join(script_path, script_name))
-        mmguero.eprint("Arguments: {}".format(sys.argv[1:]))
-        mmguero.eprint("Arguments: {}".format(args))
+        mmguero.eprint(f"Arguments: {sys.argv[1:]}")
+        mmguero.eprint(f"Arguments: {args}")
     else:
         sys.tracebacklimit = 0
 
