@@ -50,27 +50,33 @@ To install FFmpeg, use your operating system's package manager or install binari
 ## usage
 
 ```
-usage: monkeyplug.py <arguments>
-
-monkeyplug.py
+usage: monkeyplug <arguments>
 
 options:
-  -v, --verbose [true|false]
+  -h, --help            show this help message and exit
+  -v [true|false], --verbose [true|false]
                         Verbose/debug output
-  -m, --mode <string>   Speech recognition engine (whisper|vosk) (default: whisper)
-  -i, --input <string>  Input file (or URL)
-  -o, --output <string>
+  -m <string>, --mode <string>
+                        Speech recognition engine (whisper|vosk) (default: whisper)
+  -i <string>, --input <string>
+                        Input file (or URL)
+  -o <string>, --output <string>
                         Output file
   --output-json <string>
                         Output file to store transcript JSON
-  -w, --swears <profanity file>
+  -w <profanity file>, --swears <profanity file>
                         text file containing profanity (default: "swears.txt")
-  -a, --audio-params APARAMS
+  -a <str>, --audio-params <str>
                         Audio parameters for ffmpeg (default depends on output audio codec)
-  -c, --channels <int>  Audio output channels (default: 2)
-  -s, --sample-rate <int>
+  -c <int>, --channels <int>
+                        Audio output channels (default: 2)
+  -s <int>, --sample-rate <int>
                         Audio output sample rate (default: 48000)
-  -f, --format <string>
+  -r <str>, --bitrate <str>
+                        Audio output bitrate (default: 256K)
+  -q <int>, --vorbis-qscale <int>
+                        qscale for libvorbis output (default: 5)
+  -f <string>, --format <string>
                         Output file format (default: inferred from extension of --output, or "MATCH")
   --pad-milliseconds <int>
                         Milliseconds to pad on either side of muted segments (default: 0)
@@ -78,9 +84,9 @@ options:
                         Milliseconds to pad before muted segments (default: 0)
   --pad-milliseconds-post <int>
                         Milliseconds to pad after muted segments (default: 0)
-  -b, --beep [true|false]
+  -b [true|false], --beep [true|false]
                         Beep instead of silence
-  -h, --beep-hertz <int>
+  -z <int>, --beep-hertz <int>
                         Beep frequency hertz (default: 1000)
   --beep-mix-normalize [true|false]
                         Normalize mix of audio and beeps (default: False)
@@ -105,6 +111,7 @@ Whisper Options:
                         Whisper model name (base.en)
   --torch-threads <int>
                         Number of threads used by torch for CPU inference (0)
+
 ```
 
 ### Docker
