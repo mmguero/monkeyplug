@@ -24,14 +24,25 @@ from itertools import tee
 ###################################################################################################
 CHANNELS_REPLACER = 'CHANNELS'
 SAMPLE_RATE_REPLACER = 'SAMPLE'
+BIT_RATE_REPLACER = 'BITRATE'
+VORBIS_QSCALE_REPLACER = 'QSCALE'
 AUDIO_DEFAULT_PARAMS_BY_FORMAT = {
     "flac": ["-c:a", "flac", "-ar", SAMPLE_RATE_REPLACER, "-ac", CHANNELS_REPLACER],
-    "m4a": ["-c:a", "aac", "-b:a", "128K", "-ar", SAMPLE_RATE_REPLACER, "-ac", CHANNELS_REPLACER],
-    "aac": ["-c:a", "aac", "-b:a", "128K", "-ar", SAMPLE_RATE_REPLACER, "-ac", CHANNELS_REPLACER],
-    "mp3": ["-c:a", "libmp3lame", "-b:a", "128K", "-ar", SAMPLE_RATE_REPLACER, "-ac", CHANNELS_REPLACER],
-    "ogg": ["-c:a", "libvorbis", "-qscale:a", "5", "-ar", SAMPLE_RATE_REPLACER, "-ac", CHANNELS_REPLACER],
-    "opus": ["-c:a", "libopus", "-b:a", "128K", "-ar", SAMPLE_RATE_REPLACER, "-ac", CHANNELS_REPLACER],
-    "ac3": ["-c:a", "ac3", "-b:a", "128K", "-ar", SAMPLE_RATE_REPLACER, "-ac", CHANNELS_REPLACER],
+    "m4a": ["-c:a", "aac", "-b:a", BIT_RATE_REPLACER, "-ar", SAMPLE_RATE_REPLACER, "-ac", CHANNELS_REPLACER],
+    "aac": ["-c:a", "aac", "-b:a", BIT_RATE_REPLACER, "-ar", SAMPLE_RATE_REPLACER, "-ac", CHANNELS_REPLACER],
+    "mp3": ["-c:a", "libmp3lame", "-b:a", BIT_RATE_REPLACER, "-ar", SAMPLE_RATE_REPLACER, "-ac", CHANNELS_REPLACER],
+    "ogg": [
+        "-c:a",
+        "libvorbis",
+        "-qscale:a",
+        VORBIS_QSCALE_REPLACER,
+        "-ar",
+        SAMPLE_RATE_REPLACER,
+        "-ac",
+        CHANNELS_REPLACER,
+    ],
+    "opus": ["-c:a", "libopus", "-b:a", BIT_RATE_REPLACER, "-ar", SAMPLE_RATE_REPLACER, "-ac", CHANNELS_REPLACER],
+    "ac3": ["-c:a", "ac3", "-b:a", BIT_RATE_REPLACER, "-ar", SAMPLE_RATE_REPLACER, "-ac", CHANNELS_REPLACER],
     "wav": ["-c:a", "pcm_s16le", "-ar", SAMPLE_RATE_REPLACER, "-ac", CHANNELS_REPLACER],
 }
 AUDIO_CODEC_TO_FORMAT = {
@@ -47,6 +58,8 @@ AUDIO_CODEC_TO_FORMAT = {
 AUDIO_DEFAULT_FORMAT = "mp3"
 AUDIO_DEFAULT_CHANNELS = 2
 AUDIO_DEFAULT_SAMPLE_RATE = 48000
+AUDIO_DEFAULT_BIT_RATE = "256K"
+AUDIO_DEFAULT_VORBIS_QSCALE = 5
 AUDIO_MATCH_FORMAT = "MATCH"
 AUDIO_INTERMEDIATE_PARAMS = ["-c:a", "pcm_s16le", "-ac", "1", "-ar", "16000"]
 AUDIO_DEFAULT_WAV_FRAMES_CHUNK = 8000
@@ -242,6 +255,8 @@ class Plugger(object):
         aParams=None,
         aChannels=AUDIO_DEFAULT_CHANNELS,
         aSampleRate=AUDIO_DEFAULT_SAMPLE_RATE,
+        aBitRate=AUDIO_DEFAULT_BIT_RATE,
+        aVorbisQscale=AUDIO_DEFAULT_VORBIS_QSCALE,
         padMsecPre=0,
         padMsecPost=0,
         beep=False,
@@ -291,7 +306,7 @@ class Plugger(object):
         self.outputFileSpec = oFileSpec if oFileSpec else self.inputFileParts[0] + "_clean"
         if self.outputFileSpec:
             outParts = os.path.splitext(self.outputFileSpec)
-            if not oAudioFileFormat:
+            if ((not oAudioFileFormat) or (str(oAudioFileFormat).upper() == AUDIO_MATCH_FORMAT)) and oFileSpec:
                 oAudioFileFormat = outParts[1]
 
         if str(oAudioFileFormat).upper() == AUDIO_MATCH_FORMAT:
@@ -308,7 +323,8 @@ class Plugger(object):
 
         elif oAudioFileFormat:
             # output filename not specified, base on input filename with specified format
-            self.outputFileSpec = self.outputFileSpec + '.' + oAudioFileFormat.lower().lstrip('.')
+            newSuffix = '.' + oAudioFileFormat.lower().lstrip('.')
+            self.outputFileSpec = mmguero.remove_suffix(self.outputFileSpec, newSuffix) + newSuffix
 
         else:
             # can't determine what output file audio format should be
@@ -335,6 +351,8 @@ class Plugger(object):
             {
                 CHANNELS_REPLACER: str(aChannels),
                 SAMPLE_RATE_REPLACER: str(aSampleRate),
+                BIT_RATE_REPLACER: str(aBitRate),
+                VORBIS_QSCALE_REPLACER: str(aVorbisQscale),
             }.get(aParam, aParam)
             for aParam in self.aParams
         ]
@@ -538,6 +556,8 @@ class VoskPlugger(Plugger):
         aParams=None,
         aChannels=AUDIO_DEFAULT_CHANNELS,
         aSampleRate=AUDIO_DEFAULT_SAMPLE_RATE,
+        aBitRate=AUDIO_DEFAULT_BIT_RATE,
+        aVorbisQscale=AUDIO_DEFAULT_VORBIS_QSCALE,
         wChunk=AUDIO_DEFAULT_WAV_FRAMES_CHUNK,
         padMsecPre=0,
         padMsecPost=0,
@@ -577,6 +597,8 @@ class VoskPlugger(Plugger):
             aParams=aParams,
             aChannels=aChannels,
             aSampleRate=aSampleRate,
+            aBitRate=aBitRate,
+            aVorbisQscale=aVorbisQscale,
             padMsecPre=padMsecPre,
             padMsecPost=padMsecPost,
             beep=beep,
@@ -700,6 +722,8 @@ class WhisperPlugger(Plugger):
         aParams=None,
         aChannels=AUDIO_DEFAULT_CHANNELS,
         aSampleRate=AUDIO_DEFAULT_SAMPLE_RATE,
+        aBitRate=AUDIO_DEFAULT_BIT_RATE,
+        aVorbisQscale=AUDIO_DEFAULT_VORBIS_QSCALE,
         padMsecPre=0,
         padMsecPost=0,
         beep=False,
@@ -733,6 +757,8 @@ class WhisperPlugger(Plugger):
             aParams=aParams,
             aChannels=aChannels,
             aSampleRate=aSampleRate,
+            aBitRate=aBitRate,
+            aVorbisQscale=aVorbisQscale,
             padMsecPre=padMsecPre,
             padMsecPost=padMsecPost,
             beep=beep,
@@ -854,6 +880,7 @@ def RunMonkeyPlug():
         "--audio-params",
         help="Audio parameters for ffmpeg (default depends on output audio codec)",
         dest="aParams",
+        metavar="<str>",
         default=None,
     )
     parser.add_argument(
@@ -873,6 +900,23 @@ def RunMonkeyPlug():
         type=int,
         default=AUDIO_DEFAULT_SAMPLE_RATE,
         help=f"Audio output sample rate (default: {AUDIO_DEFAULT_SAMPLE_RATE})",
+    )
+    parser.add_argument(
+        "-r",
+        "--bitrate",
+        dest="aBitRate",
+        metavar="<str>",
+        default=AUDIO_DEFAULT_BIT_RATE,
+        help=f"Audio output bitrate (default: {AUDIO_DEFAULT_BIT_RATE})",
+    )
+    parser.add_argument(
+        "-q",
+        "--vorbis-qscale",
+        dest="aVorbisQscale",
+        metavar="<int>",
+        type=int,
+        default=AUDIO_DEFAULT_VORBIS_QSCALE,
+        help=f"qscale for libvorbis output (default: {AUDIO_DEFAULT_VORBIS_QSCALE})",
     )
     parser.add_argument(
         "-f",
@@ -1044,6 +1088,8 @@ def RunMonkeyPlug():
             aParams=args.aParams,
             aChannels=args.aChannels,
             aSampleRate=args.aSampleRate,
+            aBitRate=args.aBitRate,
+            aVorbisQscale=args.aVorbisQscale,
             wChunk=args.voskReadFramesChunk,
             padMsecPre=args.padMsecPre if args.padMsecPre > 0 else args.padMsec,
             padMsecPost=args.padMsecPost if args.padMsecPost > 0 else args.padMsec,
@@ -1071,6 +1117,8 @@ def RunMonkeyPlug():
             aParams=args.aParams,
             aChannels=args.aChannels,
             aSampleRate=args.aSampleRate,
+            aBitRate=args.aBitRate,
+            aVorbisQscale=args.aVorbisQscale,
             padMsecPre=args.padMsecPre if args.padMsecPre > 0 else args.padMsec,
             padMsecPost=args.padMsecPost if args.padMsecPost > 0 else args.padMsec,
             beep=args.beep,
