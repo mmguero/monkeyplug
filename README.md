@@ -6,7 +6,7 @@
 
 1. The user provides a local audio file (or a URL pointing to an audio file which is downloaded)
 2. Either [Whisper](https://openai.com/research/whisper) ([GitHub](https://github.com/openai/whisper)) or the [Vosk](https://alphacephei.com/vosk/)-[API](https://github.com/alphacep/vosk-api) is used to recognize speech in the audio file
-3. Each recognized word is checked against a [list](./src/monkeyplug/swears.txt) of profanity or other words you'd like muted
+3. Each recognized word is checked against a [list](./src/monkeyplug/swears.txt) of profanity or other words you'd like muted (supports text or [JSON format](./SWEARS_JSON_FORMAT.md))
 4. [`ffmpeg`](https://www.ffmpeg.org/) is used to create a cleaned audio file, muting or "bleeping" the objectional words
 
 You can then use your favorite media player to play the cleaned audio file.
@@ -65,7 +65,7 @@ options:
   --output-json <string>
                         Output file to store transcript JSON
   -w <profanity file>, --swears <profanity file>
-                        text file containing profanity (default: "swears.txt")
+                        text or JSON file containing profanity (default: "swears.txt")
   -a <str>, --audio-params <str>
                         Audio parameters for ffmpeg (default depends on output audio codec)
   -c <int>, --channels <int>
