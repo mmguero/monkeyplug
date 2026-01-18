@@ -385,7 +385,7 @@ class Plugger(object):
             self.swearsFileSpec = iSwearsFileSpec
         else:
             raise IOError(errno.ENOENT, os.strerror(errno.ENOENT), iSwearsFileSpec)
-        
+
         self._load_swears_file()
 
         if self.debug:
@@ -427,31 +427,31 @@ class Plugger(object):
                     is_json = True
             except (json.JSONDecodeError, ValueError):
                 pass
-        
+
         if is_json:
             self._load_swears_from_json()
         else:
             self._load_swears_from_text()
-        
+
         if self.debug:
             mmguero.eprint(f'Loaded {len(self.swearsMap)} profanity entries from {self.swearsFileSpec}')
-    
+
     def _load_swears_from_json(self):
         """Load swears from JSON format - simple array of strings
-        
+
         Format: ["word1", "word2", "word3", ...]
         Example: https://github.com/zautumnz/profane-words/blob/master/words.json
         """
         with open(self.swearsFileSpec, 'r') as f:
             data = json.load(f)
-        
+
         if not isinstance(data, list):
             raise ValueError(f"JSON swears file must contain an array of strings, got {type(data).__name__}")
-        
+
         for item in data:
             if isinstance(item, str) and item.strip():
                 self.swearsMap[scrubword(item)] = "*****"
-    
+
     def _load_swears_from_text(self):
         """Load swears from pipe-delimited text format (legacy)"""
         lines = []
