@@ -96,7 +96,7 @@ def pairwise(iterable):
 
 
 def scrubword(value):
-    return str(value).lower().strip().translate(str.maketrans('', '', string.punctuation))
+    return str(value).lower().replace("’", "'").lower().strip(string.punctuation)
 
 
 ###################################################################################################
