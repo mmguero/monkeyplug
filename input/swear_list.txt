@@ -1,0 +1,4 @@
+cold|****
+fever|*****
+warriors|********
+spirits|*******
