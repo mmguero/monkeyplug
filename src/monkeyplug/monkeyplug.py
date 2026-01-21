@@ -96,7 +96,7 @@ def pairwise(iterable):
 
 
 def scrubword(value):
-    return str(value).lower().strip().translate(str.maketrans('', '', string.punctuation))
+    return str(value).lower().replace("’", "'").lower().strip(string.punctuation)
 
 
 ###################################################################################################
@@ -411,12 +411,8 @@ class Plugger(object):
             self.swearsFileSpec = iSwearsFileSpec
         else:
             raise IOError(errno.ENOENT, os.strerror(errno.ENOENT), iSwearsFileSpec)
-        lines = []
-        with open(self.swearsFileSpec) as f:
-            lines = [line.rstrip("\n") for line in f]
-        for line in lines:
-            lineMap = line.split("|")
-            self.swearsMap[scrubword(lineMap[0])] = lineMap[1] if len(lineMap) > 1 else "*****"
+
+        self._load_swears_file()
 
         if self.debug:
             mmguero.eprint(f'Input: {self.inputFileSpec}')
@@ -480,6 +476,56 @@ class Plugger(object):
             mmguero.eprint(f'Words to censor with current swear list: {scrubbed_count}')
         
         return True
+      
+    ######## _load_swears_file ####################################################
+    def _load_swears_file(self):
+        """Load swears from text or JSON format"""
+        # Try to detect and parse JSON first
+        is_json = False
+        if self.swearsFileSpec.lower().endswith('.json'):
+            is_json = True
+        else:
+            # Try to parse as JSON even without .json extension
+            try:
+                with open(self.swearsFileSpec, 'r') as f:
+                    content = f.read()
+                    json.loads(content)
+                    is_json = True
+            except (json.JSONDecodeError, ValueError):
+                pass
+
+        if is_json:
+            self._load_swears_from_json()
+        else:
+            self._load_swears_from_text()
+
+        if self.debug:
+            mmguero.eprint(f'Loaded {len(self.swearsMap)} profanity entries from {self.swearsFileSpec}')
+
+    def _load_swears_from_json(self):
+        """Load swears from JSON format - simple array of strings
+
+        Format: ["word1", "word2", "word3", ...]
+        Example: https://github.com/zautumnz/profane-words/blob/master/words.json
+        """
+        with open(self.swearsFileSpec, 'r') as f:
+            data = json.load(f)
+
+        if not isinstance(data, list):
+            raise ValueError(f"JSON swears file must contain an array of strings, got {type(data).__name__}")
+
+        for item in data:
+            if isinstance(item, str) and item.strip():
+                self.swearsMap[scrubword(item)] = "*****"
+
+    def _load_swears_from_text(self):
+        """Load swears from pipe-delimited text format (legacy)"""
+        lines = []
+        with open(self.swearsFileSpec) as f:
+            lines = [line.rstrip("\n") for line in f]
+        for line in lines:
+            lineMap = line.split("|")
+            self.swearsMap[scrubword(lineMap[0])] = lineMap[1] if len(lineMap) > 1 else "*****"
 
     ######## CreateCleanMuteList #################################################
     def CreateCleanMuteList(self):
