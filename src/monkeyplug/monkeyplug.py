@@ -252,6 +252,9 @@ class Plugger(object):
         oAudioFileFormat,
         iSwearsFileSpec,
         outputJson,
+        inputTranscript=None,
+        saveTranscript=False,
+        forceRetranscribe=False,
         aParams=None,
         aChannels=AUDIO_DEFAULT_CHANNELS,
         aSampleRate=AUDIO_DEFAULT_SAMPLE_RATE,
@@ -279,6 +282,8 @@ class Plugger(object):
         self.forceDespiteTag = force
         self.debug = dbug
         self.outputJson = outputJson
+        self.inputTranscript = inputTranscript
+        self.saveTranscript = saveTranscript
 
         # determine input file name, or download and save file
         if (iFileSpec is not None) and os.path.isfile(iFileSpec):
@@ -374,11 +379,32 @@ class Plugger(object):
         if self.outputVideoFileFormat:
             self.outputFileSpec = outParts[0] + self.outputVideoFileFormat
 
+        # create output directory if it doesn't exist
+        self._ensure_directory_exists(self.outputFileSpec, "output directory")
+
         # if output file already exists, remove as we'll be overwriting it anyway
         if os.path.isfile(self.outputFileSpec):
             if self.debug:
                 mmguero.eprint(f'Removing existing destination file {self.outputFileSpec}')
             os.remove(self.outputFileSpec)
+
+        # If save-transcript is enabled and no explicit JSON output path, auto-generate one
+        if self.saveTranscript and not self.outputJson:
+            outputBaseName = os.path.splitext(self.outputFileSpec)[0]
+            self.outputJson = outputBaseName + '_transcript.json'
+            if self.debug:
+                mmguero.eprint(f'Auto-generated transcript output: {self.outputJson}')
+        
+        # Auto-detect existing transcript for reuse (unless force flag set or explicit input provided)
+        if self.saveTranscript and not self.inputTranscript and self.outputJson and not forceRetranscribe:
+            if os.path.exists(self.outputJson):
+                self.inputTranscript = self.outputJson
+                if self.debug:
+                    mmguero.eprint(f'Found existing transcript, reusing: {self.inputTranscript}')
+        
+        # If JSON output is specified, ensure its directory exists too
+        if self.outputJson:
+            self._ensure_directory_exists(self.outputJson, "JSON output directory")
 
         # load the swears file (not actually mapping right now, but who knows, speech synthesis maybe someday?)
         if (iSwearsFileSpec is not None) and os.path.isfile(iSwearsFileSpec):
@@ -396,6 +422,10 @@ class Plugger(object):
             mmguero.eprint(f'Encode parameters: {self.aParams}')
             mmguero.eprint(f'Profanity file: {self.swearsFileSpec}')
             mmguero.eprint(f'Intermediate downloaded file: {self.tmpDownloadedFileSpec}')
+            if self.outputJson:
+                mmguero.eprint(f'Transcript output: {self.outputJson}')
+            if self.inputTranscript:
+                mmguero.eprint(f'Input transcript: {self.inputTranscript}')
             mmguero.eprint(f'Beep instead of mute: {self.beep}')
             if self.beep:
                 mmguero.eprint(f'Beep hertz: {self.beepHertz}')
@@ -411,6 +441,42 @@ class Plugger(object):
         if os.path.isfile(self.tmpDownloadedFileSpec):
             os.remove(self.tmpDownloadedFileSpec)
 
+    ######## _ensure_directory_exists #############################################
+    def _ensure_directory_exists(self, filepath, description="directory"):
+        """Ensure the directory for a file path exists, creating it if necessary"""
+        directory = os.path.dirname(filepath)
+        if directory and not os.path.exists(directory):
+            if self.debug:
+                mmguero.eprint(f'Creating {description}: {directory}')
+            os.makedirs(directory, exist_ok=True)
+        return directory
+
+    ######## LoadTranscriptFromFile ##############################################
+    def LoadTranscriptFromFile(self):
+        """Load pre-generated transcript from JSON file"""
+        if not self.inputTranscript:
+            return False
+        
+        if not os.path.isfile(self.inputTranscript):
+            raise IOError(errno.ENOENT, os.strerror(errno.ENOENT), self.inputTranscript)
+        
+        if self.debug:
+            mmguero.eprint(f'Loading transcript from: {self.inputTranscript}')
+        
+        with open(self.inputTranscript, 'r') as f:
+            self.wordList = json.load(f)
+        
+        # Recalculate scrub flags with current swears list
+        for word in self.wordList:
+            word['scrub'] = scrubword(word.get('word', '')) in self.swearsMap
+        
+        if self.debug:
+            mmguero.eprint(f'Loaded {len(self.wordList)} words from transcript')
+            scrubbed_count = sum(1 for w in self.wordList if w.get('scrub', False))
+            mmguero.eprint(f'Words to censor with current swear list: {scrubbed_count}')
+        
+        return True
+      
     ######## _load_swears_file ####################################################
     def _load_swears_file(self):
         """Load swears from text or JSON format"""
@@ -463,7 +529,9 @@ class Plugger(object):
 
     ######## CreateCleanMuteList #################################################
     def CreateCleanMuteList(self):
-        self.RecognizeSpeech()
+        # Try to load existing transcript first, otherwise perform speech recognition
+        if not self.LoadTranscriptFromFile():
+            self.RecognizeSpeech()
 
         self.naughtyWordList = [word for word in self.wordList if word["scrub"] is True]
         if len(self.naughtyWordList) > 0:
@@ -604,6 +672,9 @@ class VoskPlugger(Plugger):
         iSwearsFileSpec,
         mDir,
         outputJson,
+        inputTranscript=None,
+        saveTranscript=False,
+        forceRetranscribe=False,
         aParams=None,
         aChannels=AUDIO_DEFAULT_CHANNELS,
         aSampleRate=AUDIO_DEFAULT_SAMPLE_RATE,
@@ -622,22 +693,26 @@ class VoskPlugger(Plugger):
         dbug=False,
     ):
         self.wavReadFramesChunk = wChunk
+        self.modelPath = None
+        self.vosk = None
 
-        # make sure the VOSK model path exists
-        if (mDir is not None) and os.path.isdir(mDir):
-            self.modelPath = mDir
-        else:
-            raise IOError(
-                errno.ENOENT,
-                os.strerror(errno.ENOENT) + " (see https://alphacephei.com/vosk/models)",
-                mDir,
-            )
+        # Only load model if we're actually going to transcribe
+        if not inputTranscript:
+            # make sure the VOSK model path exists
+            if (mDir is not None) and os.path.isdir(mDir):
+                self.modelPath = mDir
+            else:
+                raise IOError(
+                    errno.ENOENT,
+                    os.strerror(errno.ENOENT) + " (see https://alphacephei.com/vosk/models)",
+                    mDir,
+                )
 
-        self.vosk = mmguero.dynamic_import("vosk", "vosk", debug=dbug)
-        if not self.vosk:
-            raise Exception("Unable to initialize VOSK API")
-        if not dbug:
-            self.vosk.SetLogLevel(-1)
+            self.vosk = mmguero.dynamic_import("vosk", "vosk", debug=dbug)
+            if not self.vosk:
+                raise Exception("Unable to initialize VOSK API")
+            if not dbug:
+                self.vosk.SetLogLevel(-1)
 
         super().__init__(
             iFileSpec=iFileSpec,
@@ -645,6 +720,9 @@ class VoskPlugger(Plugger):
             oAudioFileFormat=oAudioFileFormat,
             iSwearsFileSpec=iSwearsFileSpec,
             outputJson=outputJson,
+            inputTranscript=inputTranscript,
+            saveTranscript=saveTranscript,
+            forceRetranscribe=forceRetranscribe,
             aParams=aParams,
             aChannels=aChannels,
             aSampleRate=aSampleRate,
@@ -665,9 +743,12 @@ class VoskPlugger(Plugger):
         self.tmpWavFileSpec = self.inputFileParts[0] + ".wav"
 
         if self.debug:
-            mmguero.eprint(f'Model directory: {self.modelPath}')
-            mmguero.eprint(f'Intermediate audio file: {self.tmpWavFileSpec}')
-            mmguero.eprint(f'Read frames: {self.wavReadFramesChunk}')
+            if inputTranscript:
+                mmguero.eprint(f'Using input transcript (skipping speech recognition)')
+            else:
+                mmguero.eprint(f'Model directory: {self.modelPath}')
+                mmguero.eprint(f'Intermediate audio file: {self.tmpWavFileSpec}')
+                mmguero.eprint(f'Read frames: {self.wavReadFramesChunk}')
 
     def __del__(self):
         super().__del__()
@@ -770,6 +851,9 @@ class WhisperPlugger(Plugger):
         mName,
         torchThreads,
         outputJson,
+        inputTranscript=None,
+        saveTranscript=False,
+        forceRetranscribe=False,
         aParams=None,
         aChannels=AUDIO_DEFAULT_CHANNELS,
         aSampleRate=AUDIO_DEFAULT_SAMPLE_RATE,
@@ -786,18 +870,24 @@ class WhisperPlugger(Plugger):
         force=False,
         dbug=False,
     ):
-        if torchThreads > 0:
-            self.torch = mmguero.dynamic_import("torch", "torch", debug=dbug)
-            if self.torch:
-                self.torch.set_num_threads(torchThreads)
+        self.whisper = None
+        self.model = None
+        self.torch = None
 
-        self.whisper = mmguero.dynamic_import("whisper", "openai-whisper", debug=dbug)
-        if not self.whisper:
-            raise Exception("Unable to initialize Whisper API")
+        # Only load model if we're actually going to transcribe (no input transcript provided)
+        if not inputTranscript:
+            if torchThreads > 0:
+                self.torch = mmguero.dynamic_import("torch", "torch", debug=dbug)
+                if self.torch:
+                    self.torch.set_num_threads(torchThreads)
 
-        self.model = self.whisper.load_model(mName, download_root=mDir)
-        if not self.model:
-            raise Exception(f"Unable to load Whisper model {mName} in {mDir}")
+            self.whisper = mmguero.dynamic_import("whisper", "openai-whisper", debug=dbug)
+            if not self.whisper:
+                raise Exception("Unable to initialize Whisper API")
+
+            self.model = self.whisper.load_model(mName, download_root=mDir)
+            if not self.model:
+                raise Exception(f"Unable to load Whisper model {mName} in {mDir}")
 
         super().__init__(
             iFileSpec=iFileSpec,
@@ -805,6 +895,9 @@ class WhisperPlugger(Plugger):
             oAudioFileFormat=oAudioFileFormat,
             iSwearsFileSpec=iSwearsFileSpec,
             outputJson=outputJson,
+            inputTranscript=inputTranscript,
+            saveTranscript=saveTranscript,
+            forceRetranscribe=forceRetranscribe,
             aParams=aParams,
             aChannels=aChannels,
             aSampleRate=aSampleRate,
@@ -823,8 +916,11 @@ class WhisperPlugger(Plugger):
         )
 
         if self.debug:
-            mmguero.eprint(f'Model directory: {mDir}')
-            mmguero.eprint(f'Model name: {mName}')
+            if inputTranscript:
+                mmguero.eprint(f'Using input transcript (skipping speech recognition)')
+            else:
+                mmguero.eprint(f'Model directory: {mDir}')
+                mmguero.eprint(f'Model name: {mName}')
 
     def __del__(self):
         super().__del__()
@@ -925,6 +1021,29 @@ def RunMonkeyPlug():
         help=f"text file containing profanity (default: \"{SWEARS_FILENAME_DEFAULT}\")",
         default=os.path.join(script_path, SWEARS_FILENAME_DEFAULT),
         metavar="<profanity file>",
+    )
+    parser.add_argument(
+        "--input-transcript",
+        dest="inputTranscript",
+        type=str,
+        default=None,
+        required=False,
+        metavar="<string>",
+        help="Load existing transcript JSON instead of performing speech recognition",
+    )
+    parser.add_argument(
+        "--save-transcript",
+        dest="saveTranscript",
+        action="store_true",
+        default=False,
+        help="Automatically save transcript JSON alongside output audio file",
+    )
+    parser.add_argument(
+        "--force-retranscribe",
+        dest="forceRetranscribe",
+        action="store_true",
+        default=False,
+        help="Force new transcription even if transcript file exists (overrides automatic reuse)",
     )
     parser.add_argument(
         "-a",
@@ -1136,6 +1255,9 @@ def RunMonkeyPlug():
             args.swears,
             args.voskModelDir,
             args.outputJson,
+            inputTranscript=args.inputTranscript,
+            saveTranscript=args.saveTranscript,
+            forceRetranscribe=args.forceRetranscribe,
             aParams=args.aParams,
             aChannels=args.aChannels,
             aSampleRate=args.aSampleRate,
@@ -1165,6 +1287,9 @@ def RunMonkeyPlug():
             args.whisperModelName,
             args.torchThreads,
             args.outputJson,
+            inputTranscript=args.inputTranscript,
+            saveTranscript=args.saveTranscript,
+            forceRetranscribe=args.forceRetranscribe,
             aParams=args.aParams,
             aChannels=args.aChannels,
             aSampleRate=args.aSampleRate,

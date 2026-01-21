@@ -5,9 +5,10 @@
 **monkeyplug** is a little script to censor profanity in audio files (intended for podcasts, but YMMV) in a few simple steps:
 
 1. The user provides a local audio file (or a URL pointing to an audio file which is downloaded)
-2. Either [Whisper](https://openai.com/research/whisper) ([GitHub](https://github.com/openai/whisper)) or the [Vosk](https://alphacephei.com/vosk/)-[API](https://github.com/alphacep/vosk-api) is used to recognize speech in the audio file
+2. Either [Whisper](https://openai.com/research/whisper) ([GitHub](https://github.com/openai/whisper)) or the [Vosk](https://alphacephei.com/vosk/)-[API](https://github.com/alphacep/vosk-api) is used to recognize speech in the audio file (or a pre-generated transcript can be loaded)
 3. Each recognized word is checked against a [list](./src/monkeyplug/swears.txt) of profanity or other words you'd like muted (supports text or [JSON format](./SWEARS_JSON_FORMAT.md))
 4. [`ffmpeg`](https://www.ffmpeg.org/) is used to create a cleaned audio file, muting or "bleeping" the objectional words
+5. Optionally, the transcript can be saved for reuse in future processing runs
 
 You can then use your favorite media player to play the cleaned audio file.
 
@@ -62,10 +63,14 @@ options:
                         Input file (or URL)
   -o <string>, --output <string>
                         Output file
-  --output-json <string>
-                        Output file to store transcript JSON
   -w <profanity file>, --swears <profanity file>
                         text or JSON file containing profanity (default: "swears.txt")
+  --output-json <string>
+                        Output file to store transcript JSON
+  --input-transcript <string>
+                        Load existing transcript JSON instead of performing speech recognition
+  --save-transcript     Automatically save transcript JSON alongside output audio file
+  --force-retranscribe  Force new transcription even if transcript file exists (overrides automatic reuse)                        
   -a <str>, --audio-params <str>
                         Audio parameters for ffmpeg (default depends on output audio codec)
   -c <int>, --channels <int>
@@ -136,6 +141,37 @@ Alternately, a [Dockerfile](./docker/Dockerfile) is provided to allow you to run
     - oci.guero.org/monkeyplug:whisper-large
 
 then run [`monkeyplug-docker.sh`](./docker/monkeyplug-docker.sh) inside the directory where your audio files are located.
+
+## Transcript Workflow
+
+**monkeyplug** supports saving and reusing transcripts to improve workflow efficiency:
+
+### Save Transcript for Later Reuse
+
+```bash
+# Generate transcript once and save it
+monkeyplug -i input.mp3 -o output.mp3 --save-transcript
+
+# This creates output.mp3 and output_transcript.json
+```
+
+### Automatic Transcript Reuse
+
+```bash
+# Second run: Automatically detects and reuses transcript (22x faster!)
+monkeyplug -i input.mp3 -o output.mp3 --save-transcript
+# Finds output_transcript.json and reuses it automatically
+
+# Force new transcription when needed
+monkeyplug -i input.mp3 -o output.mp3 --save-transcript --force-retranscribe
+```
+
+### Manual Transcript Loading
+
+```bash
+# Explicitly specify transcript to load
+monkeyplug -i input.mp3 -o output_strict.mp3 --input-transcript output_transcript.json -w strict_swears.txt
+```
 
 ## Contributing
 
