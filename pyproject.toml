@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "monkeyplug"
-version = "2.1.8"
+version = "2.1.9"
 authors = [
   { name="Seth Grover", email="mero.mero.guero@gmail.com" },
 ]
