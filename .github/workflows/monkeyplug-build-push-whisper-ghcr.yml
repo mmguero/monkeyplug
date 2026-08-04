@@ -1,6 +1,5 @@
 ---
 name: monkeyplug-build-push-whisper-ghcr
-
 on:
   push:
     branches:
@@ -15,41 +14,31 @@ on:
   repository_dispatch:
   schedule:
     - cron: '0 12 15 * *'
-
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/monkeyplug
   IMAGE_ARCH: amd64
   REPO_CONTEXT: .
   REPO_CONTAINERFILE: ./docker/Dockerfile
-
+concurrency:
+  group: monkeyplug-whisper-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   setup:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.matrix.outputs.value }}
     steps:
-      -
-        name: Cancel previous run in progress
-        id: cancel-previous-runs
-        uses: styfle/cancel-workflow-action@d07a454dad7609a92316b57b23c9ccfd4f59af66
-        with:
-          ignore_sha: true
-          all_but_latest: true
-          access_token: ${{ secrets.GITHUB_TOKEN }}
-      -
-        name: Enumerate Whisper models
+      - name: Enumerate Whisper models
         id: matrix
         run: |
           echo "value=[\"tiny.en\", \"tiny\", \"base.en\", \"base\", \"small.en\", \"small\", \"medium.en\", \"medium\", \"large-v1\", \"large-v2\", \"large-v3\", \"large\"]" >> $GITHUB_OUTPUT
-      -
-        run: |
+      - run: |
           echo "${{ steps.matrix.outputs.value }}"
   buildah:
-    needs: [ setup ]
+    needs: [setup]
     runs-on: ubuntu-latest
     permissions:
-      actions: write
       packages: write
       contents: read
       security-events: write
@@ -58,23 +47,19 @@ jobs:
       matrix:
         value: ${{fromJSON(needs.setup.outputs.matrix)}}
     steps:
-      -
-        name: Checkout
+      - name: Checkout
         id: repo-checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-      -
-        name: Set up QEMU
+      - name: Set up QEMU
         id: setup-qemu
         uses: docker/setup-qemu-action@v3
-      -
-        name: Set up Docker Buildx
+      - name: Set up Docker Buildx
         id: setup-docker-buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd
         with:
           driver-opts: |
             image=moby/buildkit:master
-      -
-        name: Free up space
+      - name: Free up space
         shell: bash
         id: remove_useless_stuff
         run: |
@@ -102,16 +87,14 @@ jobs:
             powershell \
             temurin*  >/dev/null 2>&1 || true
           sudo env DEBIAN_FRONTEND=noninteractive apt-get -q -y --purge autoremove >/dev/null 2>&1 || true
-      -
-        name: ghcr.io login
+      - name: ghcr.io login
         id: ghcr-io-login
         uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      -
-        name: Build and push Monkeyplug (Whisper) image
+      - name: Build and push Monkeyplug (Whisper) image
         id: build-and-push
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f
         with:
@@ -121,5 +104,5 @@ jobs:
           file: ${{ env.REPO_CONTAINERFILE }}
           platforms: ${{ env.IMAGE_ARCH }}
           target: whisper
-          build-args: |
+          build-args: |-
             WHISPER_MODEL_NAME=${{ matrix.value }}
