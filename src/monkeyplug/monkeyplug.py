@@ -1,12 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import argparse
 import base64
 import errno
-import importlib
-import importlib.metadata
-import importlib.util
 import json
 import mmguero
 import mutagen
@@ -20,6 +16,14 @@ import wave
 
 from urllib.parse import urlparse
 from itertools import tee
+
+from monkeyplug.utilities import (
+    FFmpegCommandBuilder,
+    AudioFilterBuilder,
+    FFmpegRunner,
+    get_codecs as GetCodecs,
+    create_argument_parser,
+)
 
 ###################################################################################################
 CHANNELS_REPLACER = 'CHANNELS'
@@ -100,7 +104,6 @@ def scrubword(value):
 
 
 ###################################################################################################
-# download to file
 def DownloadToFile(url, local_filename=None, chunk_bytes=4096, debug=False):
     tmpDownloadedFileSpec = local_filename if local_filename else os.path.basename(urlparse(url).path)
     r = requests.get(url, stream=True, allow_redirects=True)
@@ -168,46 +171,6 @@ def SetMonkeyplugTag(local_filename, debug=False):
                     mmguero.eprint(e)
             if debug:
                 mmguero.eprint(f'Tags of {local_filename} after: {mut}')
-
-    return result
-
-
-###################################################################################################
-# get stream codecs from an input filename
-# e.g. result: {'video': {'h264'}, 'audio': {'eac3'}, 'subtitle': {'subrip'}}
-def GetCodecs(local_filename, debug=False):
-    result = {}
-    if os.path.isfile(local_filename):
-        ffprobeCmd = [
-            'ffprobe',
-            '-v',
-            'quiet',
-            '-print_format',
-            'json',
-            '-show_format',
-            '-show_streams',
-            local_filename,
-        ]
-        ffprobeResult, ffprobeOutput = mmguero.run_process(ffprobeCmd, stdout=True, stderr=False, debug=debug)
-        if ffprobeResult == 0:
-            ffprobeOutput = mmguero.load_str_if_json(' '.join(ffprobeOutput))
-            if 'streams' in ffprobeOutput:
-                for stream in ffprobeOutput['streams']:
-                    if 'codec_name' in stream and 'codec_type' in stream:
-                        cType = stream['codec_type'].lower()
-                        cValue = stream['codec_name'].lower()
-                        if cType in result:
-                            result[cType].add(cValue)
-                        else:
-                            result[cType] = set([cValue])
-            result['format'] = mmguero.deep_get(ffprobeOutput, ['format', 'format_name'])
-            if isinstance(result['format'], str):
-                result['format'] = result['format'].split(',')
-        else:
-            mmguero.eprint(' '.join(mmguero.flatten(ffprobeCmd)))
-            mmguero.eprint(ffprobeResult)
-            mmguero.eprint(ffprobeOutput)
-            raise ValueError(f"Could not analyze {local_filename}")
 
     return result
 
@@ -585,66 +548,32 @@ class Plugger(object):
         if (self.forceDespiteTag is True) or (GetMonkeyplugTagged(self.inputFileSpec, debug=self.debug) is False):
             self.CreateCleanMuteList()
 
+            # Build audio filter arguments using AudioFilterBuilder
             if len(self.muteTimeList) > 0:
                 if self.beep:
-                    muteTimeListStr = ','.join(self.muteTimeList)
-                    sineTimeListStr = ';'.join([f'{val}[beep{i+1}]' for i, val in enumerate(self.sineTimeList)])
-                    beepDelayList = ';'.join(
-                        [f'[beep{i+1}]{val}[beep{i+1}_delayed]' for i, val in enumerate(self.beepDelayList)]
+                    audioArgs = AudioFilterBuilder.build_beep_filters(
+                        self.muteTimeList,
+                        self.sineTimeList,
+                        self.beepDelayList,
+                        mix_normalize=self.beepMixNormalize,
+                        audio_weight=self.beepAudioWeight,
+                        sine_weight=self.beepSineWeight,
+                        dropout_transition=self.beepDropTransition
                     )
-                    beepMixList = ''.join([f'[beep{i+1}_delayed]' for i in range(len(self.beepDelayList))])
-                    filterStr = f"[0:a]{muteTimeListStr}[mute];{sineTimeListStr};{beepDelayList};[mute]{beepMixList}amix=inputs={len(self.beepDelayList)+1}:normalize={str(self.beepMixNormalize).lower()}:dropout_transition={self.beepDropTransition}:weights={self.beepAudioWeight} {' '.join([str(self.beepSineWeight)] * len(self.beepDelayList))}"
-                    audioArgs = ['-filter_complex', filterStr]
                 else:
-                    audioArgs = ['-af', ",".join(self.muteTimeList)]
+                    audioArgs = AudioFilterBuilder.build_mute_filters(self.muteTimeList)
             else:
                 audioArgs = []
 
-            if self.outputVideoFileFormat:
-                # replace existing audio stream in video file with -copy
-                ffmpegCmd = [
-                    'ffmpeg',
-                    '-nostdin',
-                    '-hide_banner',
-                    '-nostats',
-                    '-loglevel',
-                    'error',
-                    '-y',
-                    '-i',
-                    self.inputFileSpec,
-                    '-c:v',
-                    'copy',
-                    '-sn',
-                    '-dn',
-                    audioArgs,
-                    self.aParams,
-                    self.outputFileSpec,
-                ]
-
-            else:
-                ffmpegCmd = [
-                    'ffmpeg',
-                    '-nostdin',
-                    '-hide_banner',
-                    '-nostats',
-                    '-loglevel',
-                    'error',
-                    '-y',
-                    '-i',
-                    self.inputFileSpec,
-                    '-vn',
-                    '-sn',
-                    '-dn',
-                    audioArgs,
-                    self.aParams,
-                    self.outputFileSpec,
-                ]
-            ffmpegResult, ffmpegOutput = mmguero.run_process(ffmpegCmd, stdout=True, stderr=True, debug=self.debug)
-            if (ffmpegResult != 0) or (not os.path.isfile(self.outputFileSpec)):
-                mmguero.eprint(' '.join(mmguero.flatten(ffmpegCmd)))
-                mmguero.eprint(ffmpegResult)
-                mmguero.eprint(ffmpegOutput)
-                raise ValueError(f"Could not process {self.inputFileSpec}")
+            # Use FFmpegRunner to encode
+            FFmpegRunner.run_encode(
+                input_file=self.inputFileSpec,
+                output_file=self.outputFileSpec,
+                audio_params=self.aParams,
+                audio_args=audioArgs,
+                video_mode=bool(self.outputVideoFileFormat),
+                debug=self.debug
+            )
 
             SetMonkeyplugTag(self.outputFileSpec, debug=self.debug)
 
@@ -757,27 +686,15 @@ class VoskPlugger(Plugger):
             os.remove(self.tmpWavFileSpec)
 
     def CreateIntermediateWAV(self):
-        ffmpegCmd = [
-            'ffmpeg',
-            '-nostdin',
-            '-hide_banner',
-            '-nostats',
-            '-loglevel',
-            'error',
-            '-y',
-            '-i',
-            self.inputFileSpec,
-            '-vn',
-            '-sn',
-            '-dn',
-            AUDIO_INTERMEDIATE_PARAMS,
-            self.tmpWavFileSpec,
-        ]
-        ffmpegResult, ffmpegOutput = mmguero.run_process(ffmpegCmd, stdout=True, stderr=True, debug=self.debug)
-        if (ffmpegResult != 0) or (not os.path.isfile(self.tmpWavFileSpec)):
-            mmguero.eprint(' '.join(mmguero.flatten(ffmpegCmd)))
-            mmguero.eprint(ffmpegResult)
-            mmguero.eprint(ffmpegOutput)
+        # Use FFmpegCommandBuilder to create the WAV conversion command
+        base = FFmpegCommandBuilder.build_intermediate_wav_command(self.inputFileSpec, self.tmpWavFileSpec, AUDIO_INTERMEDIATE_PARAMS)
+        result, output = FFmpegRunner.run_command(base, debug=self.debug)
+        
+        if (result != 0) or (not os.path.isfile(self.tmpWavFileSpec)):
+            if self.debug:
+                mmguero.eprint(' '.join(mmguero.flatten(base)))
+                mmguero.eprint(f"Return code: {result}")
+                mmguero.eprint(output)
             raise ValueError(
                 f"Could not convert {self.inputFileSpec} to {self.tmpWavFileSpec} (16 kHz, mono, s16 PCM WAV)"
             )
@@ -955,282 +872,30 @@ class WhisperPlugger(Plugger):
 def RunMonkeyPlug():
 
     package_name = __package__ or "monkeyplug"
-    try:
-        metadata = importlib.metadata.metadata(package_name)
-        version = metadata.get("Version", "unknown")
-    except importlib.metadata.PackageNotFoundError:
-        version = "source"
-
-    parser = argparse.ArgumentParser(
-        description=f"{package_name} (v{version})",
-        add_help=True,
-        usage=f"{package_name} <arguments>",
-    )
-    parser.add_argument(
-        "-v",
-        "--verbose",
-        dest="debug",
-        type=mmguero.str2bool,
-        nargs="?",
-        const=True,
-        default=False,
-        metavar="true|false",
-        help="Verbose/debug output",
-    )
-    parser.add_argument(
-        "-m",
-        "--mode",
-        dest="speechRecMode",
-        metavar="<string>",
-        type=str,
-        default=DEFAULT_SPEECH_REC_MODE,
-        help=f"Speech recognition engine ({SPEECH_REC_MODE_WHISPER}|{SPEECH_REC_MODE_VOSK}) (default: {DEFAULT_SPEECH_REC_MODE})",
-    )
-    parser.add_argument(
-        "-i",
-        "--input",
-        dest="input",
-        type=str,
-        default=None,
-        required=True,
-        metavar="<string>",
-        help="Input file (or URL)",
-    )
-    parser.add_argument(
-        "-o",
-        "--output",
-        dest="output",
-        type=str,
-        default=None,
-        required=False,
-        metavar="<string>",
-        help="Output file",
-    )
-    parser.add_argument(
-        "--output-json",
-        dest="outputJson",
-        type=str,
-        default=None,
-        required=False,
-        metavar="<string>",
-        help="Output file to store transcript JSON",
-    )
-    parser.add_argument(
-        "-w",
-        "--swears",
-        help=f"text file containing profanity (default: \"{SWEARS_FILENAME_DEFAULT}\")",
-        default=os.path.join(script_path, SWEARS_FILENAME_DEFAULT),
-        metavar="<profanity file>",
-    )
-    parser.add_argument(
-        "--input-transcript",
-        dest="inputTranscript",
-        type=str,
-        default=None,
-        required=False,
-        metavar="<string>",
-        help="Load existing transcript JSON instead of performing speech recognition",
-    )
-    parser.add_argument(
-        "--save-transcript",
-        dest="saveTranscript",
-        action="store_true",
-        default=False,
-        help="Automatically save transcript JSON alongside output audio file",
-    )
-    parser.add_argument(
-        "--force-retranscribe",
-        dest="forceRetranscribe",
-        action="store_true",
-        default=False,
-        help="Force new transcription even if transcript file exists (overrides automatic reuse)",
-    )
-    parser.add_argument(
-        "-a",
-        "--audio-params",
-        help="Audio parameters for ffmpeg (default depends on output audio codec)",
-        dest="aParams",
-        metavar="<str>",
-        default=None,
-    )
-    parser.add_argument(
-        "-c",
-        "--channels",
-        dest="aChannels",
-        metavar="<int>",
-        type=int,
-        default=AUDIO_DEFAULT_CHANNELS,
-        help=f"Audio output channels (default: {AUDIO_DEFAULT_CHANNELS})",
-    )
-    parser.add_argument(
-        "-s",
-        "--sample-rate",
-        dest="aSampleRate",
-        metavar="<int>",
-        type=int,
-        default=AUDIO_DEFAULT_SAMPLE_RATE,
-        help=f"Audio output sample rate (default: {AUDIO_DEFAULT_SAMPLE_RATE})",
-    )
-    parser.add_argument(
-        "-r",
-        "--bitrate",
-        dest="aBitRate",
-        metavar="<str>",
-        default=AUDIO_DEFAULT_BIT_RATE,
-        help=f"Audio output bitrate (default: {AUDIO_DEFAULT_BIT_RATE})",
-    )
-    parser.add_argument(
-        "-q",
-        "--vorbis-qscale",
-        dest="aVorbisQscale",
-        metavar="<int>",
-        type=int,
-        default=AUDIO_DEFAULT_VORBIS_QSCALE,
-        help=f"qscale for libvorbis output (default: {AUDIO_DEFAULT_VORBIS_QSCALE})",
-    )
-    parser.add_argument(
-        "-f",
-        "--format",
-        dest="outputFormat",
-        type=str,
-        default=AUDIO_MATCH_FORMAT,
-        required=False,
-        metavar="<string>",
-        help=f"Output file format (default: inferred from extension of --output, or \"{AUDIO_MATCH_FORMAT}\")",
-    )
-    parser.add_argument(
-        "--pad-milliseconds",
-        dest="padMsec",
-        metavar="<int>",
-        type=int,
-        default=0,
-        help="Milliseconds to pad on either side of muted segments (default: 0)",
-    )
-    parser.add_argument(
-        "--pad-milliseconds-pre",
-        dest="padMsecPre",
-        metavar="<int>",
-        type=int,
-        default=0,
-        help="Milliseconds to pad before muted segments (default: 0)",
-    )
-    parser.add_argument(
-        "--pad-milliseconds-post",
-        dest="padMsecPost",
-        metavar="<int>",
-        type=int,
-        default=0,
-        help="Milliseconds to pad after muted segments (default: 0)",
-    )
-    parser.add_argument(
-        "-b",
-        "--beep",
-        dest="beep",
-        type=mmguero.str2bool,
-        nargs="?",
-        const=True,
-        default=False,
-        metavar="true|false",
-        help="Beep instead of silence",
-    )
-    parser.add_argument(
-        "-z",
-        "--beep-hertz",
-        dest="beepHertz",
-        metavar="<int>",
-        type=int,
-        default=BEEP_HERTZ_DEFAULT,
-        help=f"Beep frequency hertz (default: {BEEP_HERTZ_DEFAULT})",
-    )
-    parser.add_argument(
-        "--beep-mix-normalize",
-        dest="beepMixNormalize",
-        type=mmguero.str2bool,
-        nargs="?",
-        const=True,
-        default=BEEP_MIX_NORMALIZE_DEFAULT,
-        metavar="true|false",
-        help=f"Normalize mix of audio and beeps (default: {BEEP_MIX_NORMALIZE_DEFAULT})",
-    )
-    parser.add_argument(
-        "--beep-audio-weight",
-        dest="beepAudioWeight",
-        metavar="<int>",
-        type=int,
-        default=BEEP_AUDIO_WEIGHT_DEFAULT,
-        help=f"Mix weight for non-beeped audio (default: {BEEP_AUDIO_WEIGHT_DEFAULT})",
-    )
-    parser.add_argument(
-        "--beep-sine-weight",
-        dest="beepSineWeight",
-        metavar="<int>",
-        type=int,
-        default=BEEP_SINE_WEIGHT_DEFAULT,
-        help=f"Mix weight for beep (default: {BEEP_SINE_WEIGHT_DEFAULT})",
-    )
-    parser.add_argument(
-        "--beep-dropout-transition",
-        dest="beepDropTransition",
-        metavar="<int>",
-        type=int,
-        default=BEEP_DROPOUT_TRANSITION_DEFAULT,
-        help=f"Dropout transition for beep (default: {BEEP_DROPOUT_TRANSITION_DEFAULT})",
-    )
-
-    parser.add_argument(
-        "--force",
-        dest="forceDespiteTag",
-        type=mmguero.str2bool,
-        nargs="?",
-        const=True,
-        default=False,
-        metavar="true|false",
-        help="Process file despite existence of embedded tag",
-    )
-
-    voskArgGroup = parser.add_argument_group('VOSK Options')
-    voskArgGroup.add_argument(
-        "--vosk-model-dir",
-        dest="voskModelDir",
-        metavar="<string>",
-        type=str,
-        default=DEFAULT_VOSK_MODEL_DIR,
-        help=f"VOSK model directory (default: {DEFAULT_VOSK_MODEL_DIR})",
-    )
-    voskArgGroup.add_argument(
-        "--vosk-read-frames-chunk",
-        dest="voskReadFramesChunk",
-        metavar="<int>",
-        type=int,
-        default=os.getenv("VOSK_READ_FRAMES", AUDIO_DEFAULT_WAV_FRAMES_CHUNK),
-        help=f"WAV frame chunk (default: {AUDIO_DEFAULT_WAV_FRAMES_CHUNK})",
-    )
-
-    whisperArgGroup = parser.add_argument_group('Whisper Options')
-    whisperArgGroup.add_argument(
-        "--whisper-model-dir",
-        dest="whisperModelDir",
-        metavar="<string>",
-        type=str,
-        default=DEFAULT_WHISPER_MODEL_DIR,
-        help=f"Whisper model directory ({DEFAULT_WHISPER_MODEL_DIR})",
-    )
-    whisperArgGroup.add_argument(
-        "--whisper-model-name",
-        dest="whisperModelName",
-        metavar="<string>",
-        type=str,
-        default=DEFAULT_WHISPER_MODEL_NAME,
-        help=f"Whisper model name ({DEFAULT_WHISPER_MODEL_NAME})",
-    )
-    whisperArgGroup.add_argument(
-        "--torch-threads",
-        dest="torchThreads",
-        metavar="<int>",
-        type=int,
-        default=DEFAULT_TORCH_THREADS,
-        help=f"Number of threads used by torch for CPU inference ({DEFAULT_TORCH_THREADS})",
-    )
+    
+    constants = {
+        'SPEECH_REC_MODE_VOSK': SPEECH_REC_MODE_VOSK,
+        'SPEECH_REC_MODE_WHISPER': SPEECH_REC_MODE_WHISPER,
+        'DEFAULT_SPEECH_REC_MODE': DEFAULT_SPEECH_REC_MODE,
+        'DEFAULT_VOSK_MODEL_DIR': DEFAULT_VOSK_MODEL_DIR,
+        'DEFAULT_WHISPER_MODEL_DIR': DEFAULT_WHISPER_MODEL_DIR,
+        'DEFAULT_WHISPER_MODEL_NAME': DEFAULT_WHISPER_MODEL_NAME,
+        'DEFAULT_TORCH_THREADS': DEFAULT_TORCH_THREADS,
+        'SWEARS_FILENAME_DEFAULT': SWEARS_FILENAME_DEFAULT,
+        'AUDIO_DEFAULT_CHANNELS': AUDIO_DEFAULT_CHANNELS,
+        'AUDIO_DEFAULT_SAMPLE_RATE': AUDIO_DEFAULT_SAMPLE_RATE,
+        'AUDIO_DEFAULT_BIT_RATE': AUDIO_DEFAULT_BIT_RATE,
+        'AUDIO_DEFAULT_VORBIS_QSCALE': AUDIO_DEFAULT_VORBIS_QSCALE,
+        'AUDIO_MATCH_FORMAT': AUDIO_MATCH_FORMAT,
+        'AUDIO_DEFAULT_WAV_FRAMES_CHUNK': AUDIO_DEFAULT_WAV_FRAMES_CHUNK,
+        'BEEP_HERTZ_DEFAULT': BEEP_HERTZ_DEFAULT,
+        'BEEP_MIX_NORMALIZE_DEFAULT': BEEP_MIX_NORMALIZE_DEFAULT,
+        'BEEP_AUDIO_WEIGHT_DEFAULT': BEEP_AUDIO_WEIGHT_DEFAULT,
+        'BEEP_SINE_WEIGHT_DEFAULT': BEEP_SINE_WEIGHT_DEFAULT,
+        'BEEP_DROPOUT_TRANSITION_DEFAULT': BEEP_DROPOUT_TRANSITION_DEFAULT,
+    }
+    
+    parser = create_argument_parser(script_path, package_name, constants)
 
     try:
         parser.error = parser.exit
