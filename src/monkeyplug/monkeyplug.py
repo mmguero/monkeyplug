@@ -16,6 +16,7 @@ import requests
 import shutil
 import string
 import sys
+import tempfile
 import wave
 
 from urllib.parse import urlparse
@@ -585,66 +586,85 @@ class Plugger(object):
         if (self.forceDespiteTag is True) or (GetMonkeyplugTagged(self.inputFileSpec, debug=self.debug) is False):
             self.CreateCleanMuteList()
 
-            if len(self.muteTimeList) > 0:
-                if self.beep:
-                    muteTimeListStr = ','.join(self.muteTimeList)
-                    sineTimeListStr = ';'.join([f'{val}[beep{i+1}]' for i, val in enumerate(self.sineTimeList)])
-                    beepDelayList = ';'.join(
-                        [f'[beep{i+1}]{val}[beep{i+1}_delayed]' for i, val in enumerate(self.beepDelayList)]
-                    )
-                    beepMixList = ''.join([f'[beep{i+1}_delayed]' for i in range(len(self.beepDelayList))])
-                    filterStr = f"[0:a]{muteTimeListStr}[mute];{sineTimeListStr};{beepDelayList};[mute]{beepMixList}amix=inputs={len(self.beepDelayList)+1}:normalize={str(self.beepMixNormalize).lower()}:dropout_transition={self.beepDropTransition}:weights={self.beepAudioWeight} {' '.join([str(self.beepSineWeight)] * len(self.beepDelayList))}"
-                    audioArgs = ['-filter_complex', filterStr]
+            # Keep large filtergraphs out of argv. Linux limits the size of an
+            # individual execve() argument, which long profanity lists can exceed.
+            # TemporaryDirectory guarantees filters.txt is removed after ffmpeg
+            # finishes, including when ffmpeg exits with an error.
+            with tempfile.TemporaryDirectory(prefix='monkeyplug_') as filterTmpDir:
+                filterFileSpec = os.path.join(filterTmpDir, 'filters.txt')
+
+                if len(self.muteTimeList) > 0:
+                    if self.beep:
+                        muteTimeListStr = ','.join(self.muteTimeList)
+                        sineTimeListStr = ';'.join([f'{val}[beep{i+1}]' for i, val in enumerate(self.sineTimeList)])
+                        beepDelayList = ';'.join(
+                            [f'[beep{i+1}]{val}[beep{i+1}_delayed]' for i, val in enumerate(self.beepDelayList)]
+                        )
+                        beepMixList = ''.join([f'[beep{i+1}_delayed]' for i in range(len(self.beepDelayList))])
+                        filterStr = f"[0:a]{muteTimeListStr}[mute];{sineTimeListStr};{beepDelayList};[mute]{beepMixList}amix=inputs={len(self.beepDelayList)+1}:normalize={str(self.beepMixNormalize).lower()}:dropout_transition={self.beepDropTransition}:weights={self.beepAudioWeight} {' '.join([str(self.beepSineWeight)] * len(self.beepDelayList))}"
+                        filterArg = '-/filter_complex'
+                    else:
+                        filterStr = ','.join(self.muteTimeList)
+                        filterArg = '-/filter:a'
+
+                    with open(filterFileSpec, 'w', encoding='utf-8') as filterFile:
+                        filterFile.write(filterStr)
+
+                    if self.debug:
+                        mmguero.eprint(f'FFmpeg filter file: {filterFileSpec}')
+
+                    audioArgs = [filterArg, filterFileSpec]
                 else:
-                    audioArgs = ['-af', ",".join(self.muteTimeList)]
-            else:
-                audioArgs = []
+                    audioArgs = []
 
-            if self.outputVideoFileFormat:
-                # replace existing audio stream in video file with -copy
-                ffmpegCmd = [
-                    'ffmpeg',
-                    '-nostdin',
-                    '-hide_banner',
-                    '-nostats',
-                    '-loglevel',
-                    'error',
-                    '-y',
-                    '-i',
-                    self.inputFileSpec,
-                    '-c:v',
-                    'copy',
-                    '-sn',
-                    '-dn',
-                    audioArgs,
-                    self.aParams,
-                    self.outputFileSpec,
-                ]
+                if self.outputVideoFileFormat:
+                    # replace existing audio stream in video file with -copy
+                    ffmpegCmd = [
+                        'ffmpeg',
+                        '-nostdin',
+                        '-hide_banner',
+                        '-nostats',
+                        '-loglevel',
+                        'error',
+                        '-y',
+                        '-i',
+                        self.inputFileSpec,
+                        '-c:v',
+                        'copy',
+                        '-sn',
+                        '-dn',
+                        audioArgs,
+                        self.aParams,
+                        self.outputFileSpec,
+                    ]
 
-            else:
-                ffmpegCmd = [
-                    'ffmpeg',
-                    '-nostdin',
-                    '-hide_banner',
-                    '-nostats',
-                    '-loglevel',
-                    'error',
-                    '-y',
-                    '-i',
-                    self.inputFileSpec,
-                    '-vn',
-                    '-sn',
-                    '-dn',
-                    audioArgs,
-                    self.aParams,
-                    self.outputFileSpec,
-                ]
-            ffmpegResult, ffmpegOutput = mmguero.run_process(ffmpegCmd, stdout=True, stderr=True, debug=self.debug)
-            if (ffmpegResult != 0) or (not os.path.isfile(self.outputFileSpec)):
-                mmguero.eprint(' '.join(mmguero.flatten(ffmpegCmd)))
-                mmguero.eprint(ffmpegResult)
-                mmguero.eprint(ffmpegOutput)
-                raise ValueError(f"Could not process {self.inputFileSpec}")
+                else:
+                    ffmpegCmd = [
+                        'ffmpeg',
+                        '-nostdin',
+                        '-hide_banner',
+                        '-nostats',
+                        '-loglevel',
+                        'error',
+                        '-y',
+                        '-i',
+                        self.inputFileSpec,
+                        '-vn',
+                        '-sn',
+                        '-dn',
+                        audioArgs,
+                        self.aParams,
+                        self.outputFileSpec,
+                    ]
+
+                ffmpegResult, ffmpegOutput = mmguero.run_process(
+                    ffmpegCmd, stdout=True, stderr=True, debug=self.debug
+                )
+                if (ffmpegResult != 0) or (not os.path.isfile(self.outputFileSpec)):
+                    mmguero.eprint(' '.join(mmguero.flatten(ffmpegCmd)))
+                    mmguero.eprint(ffmpegResult)
+                    mmguero.eprint(ffmpegOutput)
+                    raise ValueError(f"Could not process {self.inputFileSpec}")
 
             SetMonkeyplugTag(self.outputFileSpec, debug=self.debug)
 

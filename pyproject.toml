@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "monkeyplug"
-version = "2.1.9"
+version = "2.1.10"
 authors = [
   { name="Seth Grover", email="mero.mero.guero@gmail.com" },
 ]
@@ -18,9 +18,9 @@ classifiers = [
     "Topic :: Multimedia :: Sound/Audio :: Speech"
 ]
 dependencies = [
-    "mmguero==2.0.3",
-    "mutagen==1.47.0",
-    "requests==2.32.5"
+    "mmguero>=2.2.3",
+    "mutagen==1.48.1",
+    "requests==2.34.2"
 ]
 
 [project.urls]
