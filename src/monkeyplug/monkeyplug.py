@@ -4,23 +4,23 @@
 import argparse
 import base64
 import errno
-import importlib
 import importlib.metadata
-import importlib.util
 import json
-import mmguero
-import mutagen
 import os
-import pathlib
-import requests
+import shlex
 import shutil
 import string
 import sys
 import tempfile
 import wave
-
-from urllib.parse import urlparse
+from contextlib import contextmanager
 from itertools import tee
+from pathlib import Path
+from urllib.parse import urlparse
+
+import mmguero
+import mutagen
+import requests
 
 ###################################################################################################
 CHANNELS_REPLACER = 'CHANNELS'
@@ -56,7 +56,6 @@ AUDIO_CODEC_TO_FORMAT = {
     "pcm_s16le": "wav",
 }
 
-AUDIO_DEFAULT_FORMAT = "mp3"
 AUDIO_DEFAULT_CHANNELS = 2
 AUDIO_DEFAULT_SAMPLE_RATE = 48000
 AUDIO_DEFAULT_BIT_RATE = "256K"
@@ -75,18 +74,15 @@ MUTAGEN_METADATA_TAG_VALUE = u'monkeyplug'
 SPEECH_REC_MODE_VOSK = "vosk"
 SPEECH_REC_MODE_WHISPER = "whisper"
 DEFAULT_SPEECH_REC_MODE = os.getenv("MONKEYPLUG_MODE", SPEECH_REC_MODE_WHISPER)
-DEFAULT_VOSK_MODEL_DIR = os.getenv(
-    "VOSK_MODEL_DIR", os.path.join(os.path.join(os.path.join(os.path.expanduser("~"), '.cache'), 'vosk'))
-)
-DEFAULT_WHISPER_MODEL_DIR = os.getenv(
-    "WHISPER_MODEL_DIR", os.path.join(os.path.join(os.path.join(os.path.expanduser("~"), '.cache'), 'whisper'))
-)
+DEFAULT_VOSK_MODEL_DIR = os.getenv("VOSK_MODEL_DIR", str(Path.home() / ".cache" / "vosk"))
+DEFAULT_WHISPER_MODEL_DIR = os.getenv("WHISPER_MODEL_DIR", str(Path.home() / ".cache" / "whisper"))
 DEFAULT_WHISPER_MODEL_NAME = os.getenv("WHISPER_MODEL_NAME", "small.en")
 DEFAULT_TORCH_THREADS = 0
 
 ###################################################################################################
-script_name = os.path.basename(__file__)
-script_path = os.path.dirname(os.path.realpath(__file__))
+script_file = Path(__file__).resolve()
+script_name = script_file.name
+script_path = str(script_file.parent)
 
 
 # thanks https://docs.python.org/3/library/itertools.html#recipes
@@ -97,154 +93,227 @@ def pairwise(iterable):
 
 
 def scrubword(value):
-    return str(value).lower().replace("’", "'").lower().strip(string.punctuation)
+    return str(value).lower().replace("’", "'").strip().strip(string.punctuation)
+
+
+def _safe_unlink(file_spec):
+    if file_spec:
+        try:
+            Path(file_spec).unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _process_output_tail(output, max_lines=20):
+    if isinstance(output, (list, tuple)):
+        lines = [str(line) for line in mmguero.flatten(output)]
+    else:
+        lines = str(output).splitlines()
+    return "\n".join(lines[-max_lines:])
+
+
+def _raise_process_error(action, command, result, output):
+    command_text = shlex.join([str(arg) for arg in mmguero.flatten(command)])
+    output_tail = _process_output_tail(output)
+    mmguero.eprint(command_text)
+    mmguero.eprint(result)
+    if output_tail:
+        mmguero.eprint(output_tail)
+    detail = f"\n{output_tail}" if output_tail else ""
+    raise RuntimeError(f"{action} (ffmpeg/ffprobe exit code {result}){detail}")
+
+
+@contextmanager
+def _temporary_output_path(final_path):
+    final_path = Path(final_path)
+    parent = final_path.parent if str(final_path.parent) else Path.cwd()
+    parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='.monkeyplug_', dir=str(parent)) as tmp_dir:
+        yield str(Path(tmp_dir) / final_path.name)
+
+
+def _write_json_atomic(file_spec, value):
+    destination = Path(file_spec)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        mode='w',
+        encoding='utf-8',
+        dir=str(destination.parent),
+        prefix=f'.{destination.name}.',
+        suffix='.tmp',
+        delete=False,
+    ) as tmp_file:
+        tmp_path = Path(tmp_file.name)
+        json.dump(value, tmp_file)
+    try:
+        os.replace(tmp_path, destination)
+    finally:
+        _safe_unlink(tmp_path)
 
 
 ###################################################################################################
 # download to file
 def DownloadToFile(url, local_filename=None, chunk_bytes=4096, debug=False):
-    tmpDownloadedFileSpec = local_filename if local_filename else os.path.basename(urlparse(url).path)
-    r = requests.get(url, stream=True, allow_redirects=True)
-    with open(tmpDownloadedFileSpec, "wb") as f:
-        for chunk in r.iter_content(chunk_size=chunk_bytes):
-            if chunk:
-                f.write(chunk)
-    fExists = os.path.isfile(tmpDownloadedFileSpec)
-    fSize = os.path.getsize(tmpDownloadedFileSpec)
-    if debug:
-        mmguero.eprint(
-            f"Download of {url} to {tmpDownloadedFileSpec} {'succeeded' if fExists else 'failed'} ({mmguero.size_human_format(fSize)})"
+    parsed_path = Path(urlparse(url).path)
+    if local_filename:
+        destination = Path(local_filename)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temporary = tempfile.NamedTemporaryFile(
+            mode='wb',
+            dir=str(destination.parent),
+            prefix=f'.{destination.name}.',
+            suffix='.part',
+            delete=False,
         )
-
-    if fExists and (fSize > 0):
-        return tmpDownloadedFileSpec
     else:
-        if fExists:
-            os.remove(tmpDownloadedFileSpec)
-        return None
+        suffix = parsed_path.suffix
+        temporary = tempfile.NamedTemporaryFile(
+            mode='wb',
+            prefix='monkeyplug_download_',
+            suffix=suffix,
+            delete=False,
+        )
+        destination = Path(temporary.name)
+
+    temporary_path = Path(temporary.name)
+    try:
+        with temporary as file_handle, requests.get(
+            url,
+            stream=True,
+            allow_redirects=True,
+            timeout=(10, 60),
+        ) as response:
+            response.raise_for_status()
+            for chunk in response.iter_content(chunk_size=chunk_bytes):
+                if chunk:
+                    file_handle.write(chunk)
+
+        file_size = temporary_path.stat().st_size
+        if file_size <= 0:
+            _safe_unlink(temporary_path)
+            return None
+
+        if local_filename:
+            os.replace(temporary_path, destination)
+        else:
+            destination = temporary_path
+
+        if debug:
+            mmguero.eprint(
+                f"Download of {url} to {destination} succeeded "
+                f"({mmguero.size_human_format(file_size)})"
+            )
+        return str(destination)
+    except Exception:
+        _safe_unlink(temporary_path)
+        raise
 
 
 ###################################################################################################
 # Get tag from file to indicate monkeyplug has already been set
 def GetMonkeyplugTagged(local_filename, debug=False):
-    result = False
-    if os.path.isfile(local_filename):
-        mut = mutagen.File(local_filename, easy=True)
-        if debug:
-            mmguero.eprint(f'Tags of {local_filename}: {mut}')
-        if hasattr(mut, 'get'):
-            for tag in MUTAGEN_METADATA_TAGS:
-                try:
-                    if MUTAGEN_METADATA_TAG_VALUE in mmguero.get_iterable(mut.get(tag, default=())):
-                        result = True
-                        break
-                except Exception as e:
-                    if debug:
-                        mmguero.eprint(e)
-    return result
+    if not Path(local_filename).is_file():
+        return False
+
+    mut = mutagen.File(local_filename, easy=True)
+    if debug:
+        mmguero.eprint(f'Tags of {local_filename}: {mut}')
+    if not hasattr(mut, 'get'):
+        return False
+
+    expected_errors = (KeyError, TypeError, ValueError, OSError, mutagen.MutagenError)
+    for tag in MUTAGEN_METADATA_TAGS:
+        try:
+            if MUTAGEN_METADATA_TAG_VALUE in mmguero.get_iterable(mut.get(tag, default=())):
+                return True
+        except expected_errors as exc:
+            if debug:
+                mmguero.eprint(exc)
+    return False
 
 
 ###################################################################################################
 # Set tag to file to indicate monkeyplug has worked its magic
 def SetMonkeyplugTag(local_filename, debug=False):
-    result = False
-    if os.path.isfile(local_filename):
-        mut = mutagen.File(local_filename, easy=True)
-        if debug:
-            mmguero.eprint(f'Tags of {local_filename} before: {mut}')
-        if hasattr(mut, '__setitem__'):
-            for tag in MUTAGEN_METADATA_TAGS:
-                try:
-                    mut[tag] = MUTAGEN_METADATA_TAG_VALUE
-                    result = True
-                    break
-                except Exception as e:
-                    if debug:
-                        mmguero.eprint(e)
-            if result:
-                try:
-                    mut.save(local_filename)
-                except Exception as e:
-                    result = False
-                    mmguero.eprint(e)
-            if debug:
-                mmguero.eprint(f'Tags of {local_filename} after: {mut}')
+    if not Path(local_filename).is_file():
+        return False
 
-    return result
+    mut = mutagen.File(local_filename, easy=True)
+    if debug:
+        mmguero.eprint(f'Tags of {local_filename} before: {mut}')
+    if not hasattr(mut, '__setitem__'):
+        return False
+
+    expected_errors = (KeyError, TypeError, ValueError, OSError, mutagen.MutagenError)
+    tag_set = False
+    for tag in MUTAGEN_METADATA_TAGS:
+        try:
+            mut[tag] = MUTAGEN_METADATA_TAG_VALUE
+            tag_set = True
+            break
+        except expected_errors as exc:
+            if debug:
+                mmguero.eprint(exc)
+
+    if tag_set:
+        try:
+            mut.save(local_filename)
+        except expected_errors as exc:
+            tag_set = False
+            mmguero.eprint(exc)
+
+    if debug:
+        mmguero.eprint(f'Tags of {local_filename} after: {mut}')
+    return tag_set
 
 
 ###################################################################################################
 # get stream codecs from an input filename
 # e.g. result: {'video': {'h264'}, 'audio': {'eac3'}, 'subtitle': {'subrip'}}
 def GetCodecs(local_filename, debug=False):
+    if not Path(local_filename).is_file():
+        return {}
+
+    ffprobe_cmd = [
+        'ffprobe',
+        '-v',
+        'quiet',
+        '-print_format',
+        'json',
+        '-show_format',
+        '-show_streams',
+        local_filename,
+    ]
+    ffprobe_result, ffprobe_output = mmguero.run_process(
+        ffprobe_cmd, stdout=True, stderr=True, debug=debug
+    )
+    if ffprobe_result != 0:
+        _raise_process_error(f'Could not analyze {local_filename}', ffprobe_cmd, ffprobe_result, ffprobe_output)
+
+    probe_data = mmguero.load_str_if_json(' '.join(ffprobe_output))
+    if not isinstance(probe_data, dict):
+        raise RuntimeError(f'ffprobe returned invalid JSON while analyzing {local_filename}')
+
     result = {}
-    if os.path.isfile(local_filename):
-        ffprobeCmd = [
-            'ffprobe',
-            '-v',
-            'quiet',
-            '-print_format',
-            'json',
-            '-show_format',
-            '-show_streams',
-            local_filename,
-        ]
-        ffprobeResult, ffprobeOutput = mmguero.run_process(ffprobeCmd, stdout=True, stderr=False, debug=debug)
-        if ffprobeResult == 0:
-            ffprobeOutput = mmguero.load_str_if_json(' '.join(ffprobeOutput))
-            if 'streams' in ffprobeOutput:
-                for stream in ffprobeOutput['streams']:
-                    if 'codec_name' in stream and 'codec_type' in stream:
-                        cType = stream['codec_type'].lower()
-                        cValue = stream['codec_name'].lower()
-                        if cType in result:
-                            result[cType].add(cValue)
-                        else:
-                            result[cType] = set([cValue])
-            result['format'] = mmguero.deep_get(ffprobeOutput, ['format', 'format_name'])
-            if isinstance(result['format'], str):
-                result['format'] = result['format'].split(',')
-        else:
-            mmguero.eprint(' '.join(mmguero.flatten(ffprobeCmd)))
-            mmguero.eprint(ffprobeResult)
-            mmguero.eprint(ffprobeOutput)
-            raise ValueError(f"Could not analyze {local_filename}")
+    for stream in probe_data.get('streams', []):
+        codec_name = stream.get('codec_name')
+        codec_type = stream.get('codec_type')
+        if codec_name and codec_type:
+            result.setdefault(codec_type.lower(), set()).add(codec_name.lower())
+
+    format_names = mmguero.deep_get(probe_data, ['format', 'format_name'])
+    if isinstance(format_names, str):
+        result['format'] = format_names.split(',')
+    elif format_names:
+        result['format'] = list(mmguero.get_iterable(format_names))
+    else:
+        result['format'] = []
 
     return result
 
 
 #################################################################################
-class Plugger(object):
-    debug = False
-    inputFileSpec = ""
-    inputCodecs = {}
-    inputFileParts = None
-    outputFileSpec = ""
-    outputAudioFileFormat = ""
-    outputVideoFileFormat = ""
-    outputJson = ""
-    tmpDownloadedFileSpec = ""
-    swearsFileSpec = ""
-    swearsMap = {}
-    wordList = []
-    naughtyWordList = []
-    # for beep and mute
-    muteTimeList = []
-    # for beep only
-    sineTimeList = []
-    beepDelayList = []
-    padSecPre = 0.0
-    padSecPost = 0.0
-    beep = False
-    beepHertz = BEEP_HERTZ_DEFAULT
-    beepMixNormalize = BEEP_MIX_NORMALIZE_DEFAULT
-    beepAudioWeight = BEEP_AUDIO_WEIGHT_DEFAULT
-    beepSineWeight = BEEP_SINE_WEIGHT_DEFAULT
-    beepDropTransition = BEEP_DROPOUT_TRANSITION_DEFAULT
-    forceDespiteTag = False
-    aParams = None
-    tags = None
-
+class Plugger:
     ######## init #################################################################
     def __init__(
         self,
@@ -272,6 +341,27 @@ class Plugger(object):
         force=False,
         dbug=False,
     ):
+        # All runtime state is instance-local. Keeping mutable defaults at class
+        # scope can leak transcript/filter data between Plugger instances.
+        self.debug = dbug
+        self.inputFileSpec = ""
+        self.inputCodecs = {}
+        self.inputFileParts = None
+        self.outputFileSpec = ""
+        self.outputAudioFileFormat = ""
+        self.outputVideoFileFormat = ""
+        self.outputJson = outputJson
+        self.tmpDownloadedFileSpec = ""
+        self.swearsFileSpec = ""
+        self.swearsMap = {}
+        self.wordList = []
+        self.naughtyWordList = []
+        self.muteTimeList = []
+        self.sineTimeList = []
+        self.beepDelayList = []
+        self.aParams = []
+        self.inputTranscript = inputTranscript
+        self.saveTranscript = saveTranscript
         self.padSecPre = padMsecPre / 1000.0
         self.padSecPost = padMsecPost / 1000.0
         self.beep = beep
@@ -281,139 +371,132 @@ class Plugger(object):
         self.beepSineWeight = beepSineWeight
         self.beepDropTransition = beepDropTransition
         self.forceDespiteTag = force
-        self.debug = dbug
-        self.outputJson = outputJson
-        self.inputTranscript = inputTranscript
-        self.saveTranscript = saveTranscript
 
-        # determine input file name, or download and save file
-        if (iFileSpec is not None) and os.path.isfile(iFileSpec):
-            self.inputFileSpec = iFileSpec
-        elif iFileSpec.lower().startswith("http"):
-            self.tmpDownloadedFileSpec = DownloadToFile(iFileSpec)
-            if (self.tmpDownloadedFileSpec is not None) and os.path.isfile(self.tmpDownloadedFileSpec):
+        try:
+            if not iFileSpec:
+                raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), iFileSpec)
+
+            input_spec = str(iFileSpec)
+            input_path = Path(input_spec)
+            output_base = None
+
+            # Determine the local input filename, downloading URLs to a unique
+            # temporary file so an unrelated file in the working directory can
+            # never be overwritten and later removed during cleanup.
+            if input_path.is_file():
+                self.inputFileSpec = str(input_path)
+                output_base = str(input_path.with_suffix(''))
+            elif input_spec.lower().startswith(('http://', 'https://')):
+                url_name = Path(urlparse(input_spec).path).name
+                if not url_name:
+                    raise ValueError(f'Unable to determine a filename from URL: {input_spec}')
+                self.tmpDownloadedFileSpec = DownloadToFile(input_spec)
+                if not self.tmpDownloadedFileSpec or not Path(self.tmpDownloadedFileSpec).is_file():
+                    raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), input_spec)
                 self.inputFileSpec = self.tmpDownloadedFileSpec
+                output_base = str(Path(url_name).with_suffix(''))
             else:
-                raise IOError(errno.ENOENT, os.strerror(errno.ENOENT), iFileSpec)
-        else:
-            raise IOError(errno.ENOENT, os.strerror(errno.ENOENT), iFileSpec)
+                raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), input_spec)
 
-        # input file should exist locally by now
-        if os.path.isfile(self.inputFileSpec):
             self.inputFileParts = os.path.splitext(self.inputFileSpec)
-            self.inputCodecs = GetCodecs(self.inputFileSpec)
-            inputFormat = next(
-                iter([x for x in self.inputCodecs.get('format', None) if x in AUDIO_DEFAULT_PARAMS_BY_FORMAT]), None
+            input_extension = Path(self.inputFileSpec).suffix.lower().lstrip('.')
+            self.inputCodecs = GetCodecs(self.inputFileSpec, debug=self.debug)
+            input_formats = [str(value).lower() for value in self.inputCodecs.get('format', [])]
+            input_format = next(
+                (value for value in input_formats if value in AUDIO_DEFAULT_PARAMS_BY_FORMAT),
+                None,
             )
-        else:
-            raise IOError(errno.ENOENT, os.strerror(errno.ENOENT), self.inputFileSpec)
 
-        # determine output file name (either specified or based on input filename)
-        self.outputFileSpec = oFileSpec if oFileSpec else self.inputFileParts[0] + "_clean"
-        if self.outputFileSpec:
-            outParts = os.path.splitext(self.outputFileSpec)
+            # Determine output filename, either explicitly or from the input.
+            self.outputFileSpec = str(oFileSpec) if oFileSpec else output_base + "_clean"
+            output_parts = os.path.splitext(self.outputFileSpec)
             if (
-                ((not oAudioFileFormat) or (str(oAudioFileFormat).upper() == AUDIO_MATCH_FORMAT))
+                (not oAudioFileFormat or str(oAudioFileFormat).upper() == AUDIO_MATCH_FORMAT)
                 and oFileSpec
-                and (len(outParts) > 1)
-                and outParts[1]
+                and output_parts[1]
             ):
-                oAudioFileFormat = outParts[1]
+                oAudioFileFormat = output_parts[1].lstrip('.')
 
-        if str(oAudioFileFormat).upper() == AUDIO_MATCH_FORMAT:
-            # output format not specified, base on input filename matching extension (or codec)
-            if self.inputFileParts[1] in AUDIO_DEFAULT_PARAMS_BY_FORMAT:
-                self.outputFileSpec = self.outputFileSpec + self.inputFileParts[1]
-            elif str(inputFormat).lower() in AUDIO_DEFAULT_PARAMS_BY_FORMAT:
-                self.outputFileSpec = self.outputFileSpec + '.' + inputFormat.lower()
+            if str(oAudioFileFormat).upper() == AUDIO_MATCH_FORMAT:
+                if input_extension in AUDIO_DEFAULT_PARAMS_BY_FORMAT:
+                    self.outputFileSpec += '.' + input_extension
+                elif input_format:
+                    self.outputFileSpec += '.' + input_format
+                else:
+                    for codec in mmguero.get_iterable(self.inputCodecs.get('audio', [])):
+                        output_format = AUDIO_CODEC_TO_FORMAT.get(str(codec).lower())
+                        if output_format:
+                            self.outputFileSpec += '.' + output_format
+                            break
+            elif oAudioFileFormat:
+                new_suffix = '.' + str(oAudioFileFormat).lower().lstrip('.')
+                self.outputFileSpec = mmguero.remove_suffix(self.outputFileSpec, new_suffix) + new_suffix
             else:
-                for codec in mmguero.get_iterable(self.inputCodecs.get('audio', [])):
-                    if codec.lower() in AUDIO_CODEC_TO_FORMAT:
-                        self.outputFileSpec = self.outputFileSpec + '.' + AUDIO_CODEC_TO_FORMAT[codec.lower()]
-                        break
+                raise ValueError("Output file audio format unspecified")
 
-        elif oAudioFileFormat:
-            # output filename not specified, base on input filename with specified format
-            newSuffix = '.' + oAudioFileFormat.lower().lstrip('.')
-            self.outputFileSpec = mmguero.remove_suffix(self.outputFileSpec, newSuffix) + newSuffix
+            output_parts = os.path.splitext(self.outputFileSpec)
+            self.outputAudioFileFormat = output_parts[1].lower().lstrip('.')
+            if not self.outputAudioFileFormat or (
+                not aParams and self.outputAudioFileFormat not in AUDIO_DEFAULT_PARAMS_BY_FORMAT
+            ):
+                raise ValueError("Output file audio format unspecified or unsupported")
 
-        else:
-            # can't determine what output file audio format should be
-            raise ValueError("Output file audio format unspecified")
+            if aParams:
+                audio_params = aParams
+                if audio_params.startswith("base64:"):
+                    audio_params = base64.b64decode(audio_params[7:]).decode("utf-8")
+                self.aParams = shlex.split(audio_params)
+            else:
+                self.aParams = list(AUDIO_DEFAULT_PARAMS_BY_FORMAT[self.outputAudioFileFormat])
 
-        # determine output file extension if it's not already obvious
-        outParts = os.path.splitext(self.outputFileSpec)
-        self.outputAudioFileFormat = outParts[1].lower().lstrip('.')
-
-        if (not self.outputAudioFileFormat) or (
-            (not aParams) and (self.outputAudioFileFormat not in AUDIO_DEFAULT_PARAMS_BY_FORMAT)
-        ):
-            raise ValueError("Output file audio format unspecified or unsupported")
-        elif not aParams:
-            # we're using ffmpeg encoding params based on output file format
-            self.aParams = AUDIO_DEFAULT_PARAMS_BY_FORMAT[self.outputAudioFileFormat]
-        else:
-            # they specified custom ffmpeg encoding params
-            self.aParams = aParams
-            if self.aParams.startswith("base64:"):
-                self.aParams = base64.b64decode(self.aParams[7:]).decode("utf-8")
-            self.aParams = self.aParams.split(' ')
-        self.aParams = [
-            {
+            replacements = {
                 CHANNELS_REPLACER: str(aChannels),
                 SAMPLE_RATE_REPLACER: str(aSampleRate),
                 BIT_RATE_REPLACER: str(aBitRate),
                 VORBIS_QSCALE_REPLACER: str(aVorbisQscale),
-            }.get(aParam, aParam)
-            for aParam in self.aParams
-        ]
+            }
+            self.aParams = [replacements.get(param, param) for param in self.aParams]
 
-        # if we're actually just replacing the audio stream(s) inside a video file, the actual output file is still a video file
-        self.outputVideoFileFormat = (
-            self.inputFileParts[1]
-            if (
-                (len(mmguero.get_iterable(self.inputCodecs.get('video', []))) > 0)
-                and (str(oAudioFileFormat).upper() == AUDIO_MATCH_FORMAT)
+            # When MATCH is still in effect for a video input, preserve video
+            # streams and replace only the audio stream.
+            self.outputVideoFileFormat = (
+                self.inputFileParts[1]
+                if (
+                    mmguero.get_iterable(self.inputCodecs.get('video', []))
+                    and str(oAudioFileFormat).upper() == AUDIO_MATCH_FORMAT
+                )
+                else ''
             )
-            else ''
-        )
-        if self.outputVideoFileFormat:
-            self.outputFileSpec = outParts[0] + self.outputVideoFileFormat
+            if self.outputVideoFileFormat:
+                self.outputFileSpec = output_parts[0] + self.outputVideoFileFormat
 
-        # create output directory if it doesn't exist
-        self._ensure_directory_exists(self.outputFileSpec, "output directory")
+            self._ensure_directory_exists(self.outputFileSpec, "output directory")
 
-        # if output file already exists, remove as we'll be overwriting it anyway
-        if os.path.isfile(self.outputFileSpec):
-            if self.debug:
-                mmguero.eprint(f'Removing existing destination file {self.outputFileSpec}')
-            os.remove(self.outputFileSpec)
-
-        # If save-transcript is enabled and no explicit JSON output path, auto-generate one
-        if self.saveTranscript and not self.outputJson:
-            outputBaseName = os.path.splitext(self.outputFileSpec)[0]
-            self.outputJson = outputBaseName + '_transcript.json'
-            if self.debug:
-                mmguero.eprint(f'Auto-generated transcript output: {self.outputJson}')
-        
-        # Auto-detect existing transcript for reuse (unless force flag set or explicit input provided)
-        if self.saveTranscript and not self.inputTranscript and self.outputJson and not forceRetranscribe:
-            if os.path.exists(self.outputJson):
-                self.inputTranscript = self.outputJson
+            # If save-transcript is enabled and no explicit JSON output path,
+            # place the transcript alongside the requested output file.
+            if self.saveTranscript and not self.outputJson:
+                self.outputJson = os.path.splitext(self.outputFileSpec)[0] + '_transcript.json'
                 if self.debug:
-                    mmguero.eprint(f'Found existing transcript, reusing: {self.inputTranscript}')
-        
-        # If JSON output is specified, ensure its directory exists too
-        if self.outputJson:
-            self._ensure_directory_exists(self.outputJson, "JSON output directory")
+                    mmguero.eprint(f'Auto-generated transcript output: {self.outputJson}')
 
-        # load the swears file (not actually mapping right now, but who knows, speech synthesis maybe someday?)
-        if (iSwearsFileSpec is not None) and os.path.isfile(iSwearsFileSpec):
-            self.swearsFileSpec = iSwearsFileSpec
-        else:
-            raise IOError(errno.ENOENT, os.strerror(errno.ENOENT), iSwearsFileSpec)
+            if self.saveTranscript and not self.inputTranscript and self.outputJson and not forceRetranscribe:
+                if Path(self.outputJson).exists():
+                    self.inputTranscript = self.outputJson
+                    if self.debug:
+                        mmguero.eprint(f'Found existing transcript, reusing: {self.inputTranscript}')
 
-        self._load_swears_file()
+            if self.outputJson:
+                self._ensure_directory_exists(self.outputJson, "JSON output directory")
+
+            if iSwearsFileSpec and Path(iSwearsFileSpec).is_file():
+                self.swearsFileSpec = str(iSwearsFileSpec)
+            else:
+                raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), iSwearsFileSpec)
+
+            self._load_swears_file()
+        except Exception:
+            self.cleanup()
+            raise
 
         if self.debug:
             mmguero.eprint(f'Input: {self.inputFileSpec}')
@@ -436,141 +519,165 @@ class Plugger(object):
                 mmguero.eprint(f'Beep dropout transition: {self.beepDropTransition}')
             mmguero.eprint(f'Force despite tags: {self.forceDespiteTag}')
 
-    ######## del ##################################################################
-    def __del__(self):
-        # if we downloaded the input file, remove it as well
-        if os.path.isfile(self.tmpDownloadedFileSpec):
-            os.remove(self.tmpDownloadedFileSpec)
+    ######## cleanup ##############################################################
+    def cleanup(self):
+        """Remove temporary files owned by this instance."""
+        _safe_unlink(self.tmpDownloadedFileSpec)
+        self.tmpDownloadedFileSpec = ""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.cleanup()
+        return False
 
     ######## _ensure_directory_exists #############################################
     def _ensure_directory_exists(self, filepath, description="directory"):
-        """Ensure the directory for a file path exists, creating it if necessary"""
-        directory = os.path.dirname(filepath)
-        if directory and not os.path.exists(directory):
+        """Ensure the parent directory for filepath exists."""
+        directory = Path(filepath).expanduser().parent
+        if directory != Path('.') and not directory.exists():
             if self.debug:
                 mmguero.eprint(f'Creating {description}: {directory}')
-            os.makedirs(directory, exist_ok=True)
-        return directory
+            directory.mkdir(parents=True, exist_ok=True)
+        return str(directory)
 
-    ######## LoadTranscriptFromFile ##############################################
+    ######## LoadTranscriptFromFile ###############################################
     def LoadTranscriptFromFile(self):
-        """Load pre-generated transcript from JSON file"""
+        """Load a pre-generated transcript from a JSON file."""
         if not self.inputTranscript:
             return False
-        
-        if not os.path.isfile(self.inputTranscript):
-            raise IOError(errno.ENOENT, os.strerror(errno.ENOENT), self.inputTranscript)
-        
+
+        transcript_path = Path(self.inputTranscript)
+        if not transcript_path.is_file():
+            raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), self.inputTranscript)
+
         if self.debug:
             mmguero.eprint(f'Loading transcript from: {self.inputTranscript}')
-        
-        with open(self.inputTranscript, 'r') as f:
-            self.wordList = json.load(f)
-        
-        # Recalculate scrub flags with current swears list
+
+        with transcript_path.open('r', encoding='utf-8') as file_handle:
+            word_list = json.load(file_handle)
+        if not isinstance(word_list, list):
+            raise ValueError(
+                f'Transcript JSON must contain an array of words, got {type(word_list).__name__}'
+            )
+        self.wordList = word_list
+
         for word in self.wordList:
             word['scrub'] = scrubword(word.get('word', '')) in self.swearsMap
-        
+
         if self.debug:
             mmguero.eprint(f'Loaded {len(self.wordList)} words from transcript')
-            scrubbed_count = sum(1 for w in self.wordList if w.get('scrub', False))
+            scrubbed_count = sum(1 for word in self.wordList if word.get('scrub'))
             mmguero.eprint(f'Words to censor with current swear list: {scrubbed_count}')
-        
+
         return True
-      
+
     ######## _load_swears_file ####################################################
     def _load_swears_file(self):
-        """Load swears from text or JSON format"""
-        # Try to detect and parse JSON first
-        is_json = False
-        if self.swearsFileSpec.lower().endswith('.json'):
-            is_json = True
-        else:
-            # Try to parse as JSON even without .json extension
-            try:
-                with open(self.swearsFileSpec, 'r') as f:
-                    content = f.read()
-                    json.loads(content)
-                    is_json = True
-            except (json.JSONDecodeError, ValueError):
-                pass
+        """Load profanity entries from JSON or legacy pipe-delimited text."""
+        swear_path = Path(self.swearsFileSpec)
+        content = swear_path.read_text(encoding='utf-8')
+        self.swearsMap = {}
 
-        if is_json:
-            self._load_swears_from_json()
+        if swear_path.suffix.lower() == '.json':
+            self._load_swears_from_json_data(json.loads(content))
         else:
-            self._load_swears_from_text()
+            try:
+                data = json.loads(content)
+            except json.JSONDecodeError:
+                self._load_swears_from_text_content(content)
+            else:
+                self._load_swears_from_json_data(data)
 
         if self.debug:
             mmguero.eprint(f'Loaded {len(self.swearsMap)} profanity entries from {self.swearsFileSpec}')
 
-    def _load_swears_from_json(self):
-        """Load swears from JSON format - simple array of strings
-
-        Format: ["word1", "word2", "word3", ...]
-        Example: https://github.com/zautumnz/profane-words/blob/master/words.json
-        """
-        with open(self.swearsFileSpec, 'r') as f:
-            data = json.load(f)
-
+    def _load_swears_from_json_data(self, data):
         if not isinstance(data, list):
             raise ValueError(f"JSON swears file must contain an array of strings, got {type(data).__name__}")
 
         for item in data:
-            if isinstance(item, str) and item.strip():
-                self.swearsMap[scrubword(item)] = "*****"
+            if isinstance(item, str):
+                normalized = scrubword(item)
+                if normalized:
+                    self.swearsMap[normalized] = "*****"
 
-    def _load_swears_from_text(self):
-        """Load swears from pipe-delimited text format (legacy)"""
-        lines = []
-        with open(self.swearsFileSpec) as f:
-            lines = [line.rstrip("\n") for line in f]
-        for line in lines:
-            lineMap = line.split("|")
-            self.swearsMap[scrubword(lineMap[0])] = lineMap[1] if len(lineMap) > 1 else "*****"
+    def _load_swears_from_text_content(self, content):
+        for raw_line in content.splitlines():
+            if not raw_line.strip():
+                continue
+            word, separator, replacement = raw_line.partition('|')
+            normalized = scrubword(word)
+            if not normalized:
+                continue
+            self.swearsMap[normalized] = replacement if separator else "*****"
 
-    ######## CreateCleanMuteList #################################################
+    ######## CreateCleanMuteList ##################################################
     def CreateCleanMuteList(self):
-        # Try to load existing transcript first, otherwise perform speech recognition
         if not self.LoadTranscriptFromFile():
             self.RecognizeSpeech()
 
-        self.naughtyWordList = [word for word in self.wordList if word["scrub"] is True]
-        if len(self.naughtyWordList) > 0:
-            # append a dummy word at the very end so that pairwise can peek then ignore it
-            self.naughtyWordList.extend(
-                [
-                    {
-                        "conf": 1,
-                        "end": self.naughtyWordList[-1]["end"] + 2.0,
-                        "start": self.naughtyWordList[-1]["end"] + 1.0,
-                        "word": "mothaflippin",
-                        "scrub": True,
-                    }
-                ]
-            )
+        self.naughtyWordList = [word for word in self.wordList if word.get("scrub")]
         if self.debug:
             mmguero.eprint(self.naughtyWordList)
+
+        intervals = []
+        for word in self.naughtyWordList:
+            try:
+                start = round(max(0.0, float(word['start']) - self.padSecPre), 3)
+                end = round(max(0.0, float(word['end']) + self.padSecPost), 3)
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError(f'Invalid transcript word timing: {word!r}') from exc
+
+            if end <= start:
+                if self.debug:
+                    mmguero.eprint(f'Skipping non-positive mute interval: {start:.3f}-{end:.3f}')
+                continue
+            intervals.append((start, end))
+
+        intervals.sort()
+        merged_intervals = []
+        for start, end in intervals:
+            if merged_intervals and start <= merged_intervals[-1][1]:
+                previous_start, previous_end = merged_intervals[-1]
+                merged_intervals[-1] = (previous_start, max(previous_end, end))
+            else:
+                merged_intervals.append((start, end))
 
         self.muteTimeList = []
         self.sineTimeList = []
         self.beepDelayList = []
-        for word, wordPeek in pairwise(self.naughtyWordList):
-            wordStart = format(word["start"] - self.padSecPre, ".3f")
-            wordEnd = format(word["end"] + self.padSecPost, ".3f")
-            wordDuration = format(float(wordEnd) - float(wordStart), ".3f")
-            wordPeekStart = format(wordPeek["start"] - self.padSecPre, ".3f")
+        fade_duration = 0.005
+
+        for index, (start, end) in enumerate(merged_intervals):
+            word_start = f'{start:.3f}'
+            word_end = f'{end:.3f}'
+            duration = f'{end - start:.3f}'
+
             if self.beep:
-                self.muteTimeList.append(f"volume=enable='between(t,{wordStart},{wordEnd})':volume=0")
-                self.sineTimeList.append(f"sine=f={self.beepHertz}:duration={wordDuration}")
-                self.beepDelayList.append(
-                    f"atrim=0:{wordDuration},adelay={'|'.join([str(int(float(wordStart) * 1000))] * 2)}"
-                )
-            else:
                 self.muteTimeList.append(
-                    "afade=enable='between(t," + wordStart + "," + wordEnd + ")':t=out:st=" + wordStart + ":d=5ms"
+                    f"volume=enable='between(t,{word_start},{word_end})':volume=0"
                 )
+                self.sineTimeList.append(f"sine=f={self.beepHertz}:duration={duration}")
+                delay_ms = str(int(round(start * 1000)))
+                self.beepDelayList.append(f"atrim=0:{duration},adelay={delay_ms}|{delay_ms}")
+                continue
+
+            self.muteTimeList.append(
+                f"afade=enable='between(t,{word_start},{word_end})':"
+                f"t=out:st={word_start}:d=5ms"
+            )
+
+            next_start = merged_intervals[index + 1][0] if index + 1 < len(merged_intervals) else None
+            fade_in_end = end + fade_duration
+            if next_start is not None:
+                fade_in_end = min(fade_in_end, next_start)
+            fade_in_end = round(fade_in_end, 3)
+            if fade_in_end > end:
                 self.muteTimeList.append(
-                    "afade=enable='between(t," + wordEnd + "," + wordPeekStart + ")':t=in:st=" + wordEnd + ":d=5ms"
+                    f"afade=enable='between(t,{word_end},{fade_in_end:.3f})':"
+                    f"t=in:st={word_end}:d=5ms"
                 )
 
         if self.debug:
@@ -581,95 +688,97 @@ class Plugger(object):
 
         return self.muteTimeList
 
-    ######## EncodeCleanAudio ####################################################
-    def EncodeCleanAudio(self):
-        if (self.forceDespiteTag is True) or (GetMonkeyplugTagged(self.inputFileSpec, debug=self.debug) is False):
-            self.CreateCleanMuteList()
+    def _build_filter_graph(self):
+        if not self.muteTimeList:
+            return None, None
 
-            # Keep large filtergraphs out of argv. Linux limits the size of an
-            # individual execve() argument, which long profanity lists can exceed.
-            # TemporaryDirectory guarantees filters.txt is removed after ffmpeg
-            # finishes, including when ffmpeg exits with an error.
-            with tempfile.TemporaryDirectory(prefix='monkeyplug_') as filterTmpDir:
-                filterFileSpec = os.path.join(filterTmpDir, 'filters.txt')
+        if not self.beep:
+            return '-/filter:a', ','.join(self.muteTimeList)
 
-                if len(self.muteTimeList) > 0:
-                    if self.beep:
-                        muteTimeListStr = ','.join(self.muteTimeList)
-                        sineTimeListStr = ';'.join([f'{val}[beep{i+1}]' for i, val in enumerate(self.sineTimeList)])
-                        beepDelayList = ';'.join(
-                            [f'[beep{i+1}]{val}[beep{i+1}_delayed]' for i, val in enumerate(self.beepDelayList)]
-                        )
-                        beepMixList = ''.join([f'[beep{i+1}_delayed]' for i in range(len(self.beepDelayList))])
-                        filterStr = f"[0:a]{muteTimeListStr}[mute];{sineTimeListStr};{beepDelayList};[mute]{beepMixList}amix=inputs={len(self.beepDelayList)+1}:normalize={str(self.beepMixNormalize).lower()}:dropout_transition={self.beepDropTransition}:weights={self.beepAudioWeight} {' '.join([str(self.beepSineWeight)] * len(self.beepDelayList))}"
-                        filterArg = '-/filter_complex'
-                    else:
-                        filterStr = ','.join(self.muteTimeList)
-                        filterArg = '-/filter:a'
+        mute_filters = ','.join(self.muteTimeList)
+        sine_filters = ';'.join(
+            f'{value}[beep{index + 1}]' for index, value in enumerate(self.sineTimeList)
+        )
+        delay_filters = ';'.join(
+            f'[beep{index + 1}]{value}[beep{index + 1}_delayed]'
+            for index, value in enumerate(self.beepDelayList)
+        )
+        mix_inputs = ''.join(
+            f'[beep{index + 1}_delayed]' for index in range(len(self.beepDelayList))
+        )
+        sine_weights = ' '.join(str(self.beepSineWeight) for _ in self.beepDelayList)
+        filter_graph = (
+            f"[0:a]{mute_filters}[mute];{sine_filters};{delay_filters};"
+            f"[mute]{mix_inputs}amix=inputs={len(self.beepDelayList) + 1}:"
+            f"normalize={str(self.beepMixNormalize).lower()}:"
+            f"dropout_transition={self.beepDropTransition}:"
+            f"weights={self.beepAudioWeight} {sine_weights}"
+        )
+        return '-/filter_complex', filter_graph
 
-                    with open(filterFileSpec, 'w', encoding='utf-8') as filterFile:
-                        filterFile.write(filterStr)
-
-                    if self.debug:
-                        mmguero.eprint(f'FFmpeg filter file: {filterFileSpec}')
-
-                    audioArgs = [filterArg, filterFileSpec]
-                else:
-                    audioArgs = []
-
-                if self.outputVideoFileFormat:
-                    # replace existing audio stream in video file with -copy
-                    ffmpegCmd = [
-                        'ffmpeg',
-                        '-nostdin',
-                        '-hide_banner',
-                        '-nostats',
-                        '-loglevel',
-                        'error',
-                        '-y',
-                        '-i',
-                        self.inputFileSpec,
-                        '-c:v',
-                        'copy',
-                        '-sn',
-                        '-dn',
-                        audioArgs,
-                        self.aParams,
-                        self.outputFileSpec,
-                    ]
-
-                else:
-                    ffmpegCmd = [
-                        'ffmpeg',
-                        '-nostdin',
-                        '-hide_banner',
-                        '-nostats',
-                        '-loglevel',
-                        'error',
-                        '-y',
-                        '-i',
-                        self.inputFileSpec,
-                        '-vn',
-                        '-sn',
-                        '-dn',
-                        audioArgs,
-                        self.aParams,
-                        self.outputFileSpec,
-                    ]
-
-                ffmpegResult, ffmpegOutput = mmguero.run_process(
-                    ffmpegCmd, stdout=True, stderr=True, debug=self.debug
-                )
-                if (ffmpegResult != 0) or (not os.path.isfile(self.outputFileSpec)):
-                    mmguero.eprint(' '.join(mmguero.flatten(ffmpegCmd)))
-                    mmguero.eprint(ffmpegResult)
-                    mmguero.eprint(ffmpegOutput)
-                    raise ValueError(f"Could not process {self.inputFileSpec}")
-
-            SetMonkeyplugTag(self.outputFileSpec, debug=self.debug)
-
+    def _build_ffmpeg_command(self, output_file, audio_args):
+        command = [
+            'ffmpeg',
+            '-nostdin',
+            '-hide_banner',
+            '-nostats',
+            '-loglevel',
+            'error',
+            '-y',
+            '-i',
+            self.inputFileSpec,
+        ]
+        if self.outputVideoFileFormat:
+            command.extend(['-c:v', 'copy', '-sn', '-dn'])
         else:
-            shutil.copyfile(self.inputFileSpec, self.outputFileSpec)
+            command.extend(['-vn', '-sn', '-dn'])
+        command.extend(audio_args)
+        command.extend(self.aParams)
+        command.append(output_file)
+        return command
+
+    ######## EncodeCleanAudio #####################################################
+    def EncodeCleanAudio(self):
+        should_process = self.forceDespiteTag or not GetMonkeyplugTagged(
+            self.inputFileSpec, debug=self.debug
+        )
+
+        with _temporary_output_path(self.outputFileSpec) as temporary_output:
+            if should_process:
+                self.CreateCleanMuteList()
+                filter_arg, filter_graph = self._build_filter_graph()
+
+                if filter_graph is not None:
+                    with tempfile.TemporaryDirectory(prefix='monkeyplug_filter_') as filter_tmp_dir:
+                        filter_file_spec = str(Path(filter_tmp_dir) / 'filters.txt')
+                        Path(filter_file_spec).write_text(filter_graph, encoding='utf-8')
+                        if self.debug:
+                            mmguero.eprint(f'FFmpeg filter file: {filter_file_spec}')
+                        ffmpeg_cmd = self._build_ffmpeg_command(
+                            temporary_output, [filter_arg, filter_file_spec]
+                        )
+                        ffmpeg_result, ffmpeg_output = mmguero.run_process(
+                            ffmpeg_cmd, stdout=True, stderr=True, debug=self.debug
+                        )
+                else:
+                    ffmpeg_cmd = self._build_ffmpeg_command(temporary_output, [])
+                    ffmpeg_result, ffmpeg_output = mmguero.run_process(
+                        ffmpeg_cmd, stdout=True, stderr=True, debug=self.debug
+                    )
+
+                if ffmpeg_result != 0 or not Path(temporary_output).is_file():
+                    _raise_process_error(
+                        f'Could not process {self.inputFileSpec}',
+                        ffmpeg_cmd,
+                        ffmpeg_result,
+                        ffmpeg_output,
+                    )
+
+                SetMonkeyplugTag(temporary_output, debug=self.debug)
+            else:
+                shutil.copyfile(self.inputFileSpec, temporary_output)
+
+            os.replace(temporary_output, self.outputFileSpec)
 
         return self.outputFileSpec
 
@@ -679,11 +788,6 @@ class Plugger(object):
 
 #################################################################################
 class VoskPlugger(Plugger):
-    tmpWavFileSpec = ""
-    modelPath = ""
-    wavReadFramesChunk = AUDIO_DEFAULT_WAV_FRAMES_CHUNK
-    vosk = None
-
     def __init__(
         self,
         iFileSpec,
@@ -712,17 +816,16 @@ class VoskPlugger(Plugger):
         force=False,
         dbug=False,
     ):
+        self.tmpWavFileSpec = ""
         self.wavReadFramesChunk = wChunk
         self.modelPath = None
         self.vosk = None
 
-        # Only load model if we're actually going to transcribe
         if not inputTranscript:
-            # make sure the VOSK model path exists
-            if (mDir is not None) and os.path.isdir(mDir):
-                self.modelPath = mDir
+            if mDir and Path(mDir).is_dir():
+                self.modelPath = str(mDir)
             else:
-                raise IOError(
+                raise FileNotFoundError(
                     errno.ENOENT,
                     os.strerror(errno.ENOENT) + " (see https://alphacephei.com/vosk/models)",
                     mDir,
@@ -730,7 +833,7 @@ class VoskPlugger(Plugger):
 
             self.vosk = mmguero.dynamic_import("vosk", "vosk", debug=dbug)
             if not self.vosk:
-                raise Exception("Unable to initialize VOSK API")
+                raise RuntimeError("Unable to initialize VOSK API")
             if not dbug:
                 self.vosk.SetLogLevel(-1)
 
@@ -760,24 +863,27 @@ class VoskPlugger(Plugger):
             dbug=dbug,
         )
 
-        self.tmpWavFileSpec = self.inputFileParts[0] + ".wav"
-
         if self.debug:
             if inputTranscript:
-                mmguero.eprint(f'Using input transcript (skipping speech recognition)')
+                mmguero.eprint('Using input transcript (skipping speech recognition)')
             else:
                 mmguero.eprint(f'Model directory: {self.modelPath}')
-                mmguero.eprint(f'Intermediate audio file: {self.tmpWavFileSpec}')
                 mmguero.eprint(f'Read frames: {self.wavReadFramesChunk}')
 
-    def __del__(self):
-        super().__del__()
-        # clean up intermediate WAV file used for speech recognition
-        if os.path.isfile(self.tmpWavFileSpec):
-            os.remove(self.tmpWavFileSpec)
+    def cleanup(self):
+        _safe_unlink(self.tmpWavFileSpec)
+        self.tmpWavFileSpec = ""
+        super().cleanup()
 
     def CreateIntermediateWAV(self):
-        ffmpegCmd = [
+        _safe_unlink(self.tmpWavFileSpec)
+        with tempfile.NamedTemporaryFile(prefix='monkeyplug_', suffix='.wav', delete=False) as tmp_file:
+            self.tmpWavFileSpec = tmp_file.name
+
+        if self.debug:
+            mmguero.eprint(f'Intermediate audio file: {self.tmpWavFileSpec}')
+
+        ffmpeg_cmd = [
             'ffmpeg',
             '-nostdin',
             '-hide_banner',
@@ -790,62 +896,58 @@ class VoskPlugger(Plugger):
             '-vn',
             '-sn',
             '-dn',
-            AUDIO_INTERMEDIATE_PARAMS,
+            *AUDIO_INTERMEDIATE_PARAMS,
             self.tmpWavFileSpec,
         ]
-        ffmpegResult, ffmpegOutput = mmguero.run_process(ffmpegCmd, stdout=True, stderr=True, debug=self.debug)
-        if (ffmpegResult != 0) or (not os.path.isfile(self.tmpWavFileSpec)):
-            mmguero.eprint(' '.join(mmguero.flatten(ffmpegCmd)))
-            mmguero.eprint(ffmpegResult)
-            mmguero.eprint(ffmpegOutput)
-            raise ValueError(
-                f"Could not convert {self.inputFileSpec} to {self.tmpWavFileSpec} (16 kHz, mono, s16 PCM WAV)"
+        ffmpeg_result, ffmpeg_output = mmguero.run_process(
+            ffmpeg_cmd, stdout=True, stderr=True, debug=self.debug
+        )
+        if ffmpeg_result != 0 or not Path(self.tmpWavFileSpec).is_file():
+            _raise_process_error(
+                f'Could not convert {self.inputFileSpec} to 16 kHz mono PCM WAV',
+                ffmpeg_cmd,
+                ffmpeg_result,
+                ffmpeg_output,
             )
 
         return self.inputFileSpec
 
     def RecognizeSpeech(self):
         self.CreateIntermediateWAV()
-        self.wordList.clear()
-        with wave.open(self.tmpWavFileSpec, "rb") as wf:
+        self.wordList = []
+        with wave.open(self.tmpWavFileSpec, "rb") as wav_file:
             if (
-                (wf.getnchannels() != 1)
-                or (wf.getframerate() != 16000)
-                or (wf.getsampwidth() != 2)
-                or (wf.getcomptype() != "NONE")
+                wav_file.getnchannels() != 1
+                or wav_file.getframerate() != 16000
+                or wav_file.getsampwidth() != 2
+                or wav_file.getcomptype() != "NONE"
             ):
-                raise Exception(f"Audio file ({self.tmpWavFileSpec}) must be 16 kHz, mono, s16 PCM WAV")
-
-            rec = self.vosk.KaldiRecognizer(self.vosk.Model(self.modelPath), wf.getframerate())
-            rec.SetWords(True)
-            while True:
-                data = wf.readframes(self.wavReadFramesChunk)
-                if len(data) == 0:
-                    break
-                if rec.AcceptWaveform(data):
-                    res = json.loads(rec.Result())
-                    if "result" in res:
-                        self.wordList.extend(
-                            [
-                                dict(r, **{'scrub': scrubword(mmguero.deep_get(r, ["word"])) in self.swearsMap})
-                                for r in res["result"]
-                            ]
-                        )
-            res = json.loads(rec.FinalResult())
-            if "result" in res:
-                self.wordList.extend(
-                    [
-                        dict(r, **{'scrub': scrubword(mmguero.deep_get(r, ["word"])) in self.swearsMap})
-                        for r in res["result"]
-                    ]
+                raise RuntimeError(
+                    f"Audio file ({self.tmpWavFileSpec}) must be 16 kHz, mono, s16 PCM WAV"
                 )
 
-            if self.debug:
-                mmguero.eprint(json.dumps(self.wordList))
+            recognizer = self.vosk.KaldiRecognizer(self.vosk.Model(self.modelPath), wav_file.getframerate())
+            recognizer.SetWords(True)
+            while True:
+                data = wav_file.readframes(self.wavReadFramesChunk)
+                if not data:
+                    break
+                if recognizer.AcceptWaveform(data):
+                    result = json.loads(recognizer.Result())
+                    for word in result.get("result", []):
+                        word['scrub'] = scrubword(mmguero.deep_get(word, ["word"])) in self.swearsMap
+                        self.wordList.append(word)
 
-            if self.outputJson:
-                with open(self.outputJson, "w") as f:
-                    f.write(json.dumps(self.wordList))
+            result = json.loads(recognizer.FinalResult())
+            for word in result.get("result", []):
+                word['scrub'] = scrubword(mmguero.deep_get(word, ["word"])) in self.swearsMap
+                self.wordList.append(word)
+
+        if self.debug:
+            mmguero.eprint(json.dumps(self.wordList))
+
+        if self.outputJson:
+            _write_json_atomic(self.outputJson, self.wordList)
 
         return self.wordList
 
@@ -855,12 +957,6 @@ class VoskPlugger(Plugger):
 
 #################################################################################
 class WhisperPlugger(Plugger):
-    debug = False
-    model = None
-    torch = None
-    whisper = None
-    transcript = None
-
     def __init__(
         self,
         iFileSpec,
@@ -893,8 +989,8 @@ class WhisperPlugger(Plugger):
         self.whisper = None
         self.model = None
         self.torch = None
+        self.transcript = None
 
-        # Only load model if we're actually going to transcribe (no input transcript provided)
         if not inputTranscript:
             if torchThreads > 0:
                 self.torch = mmguero.dynamic_import("torch", "torch", debug=dbug)
@@ -903,11 +999,11 @@ class WhisperPlugger(Plugger):
 
             self.whisper = mmguero.dynamic_import("whisper", "openai-whisper", debug=dbug)
             if not self.whisper:
-                raise Exception("Unable to initialize Whisper API")
+                raise RuntimeError("Unable to initialize Whisper API")
 
             self.model = self.whisper.load_model(mName, download_root=mDir)
             if not self.model:
-                raise Exception(f"Unable to load Whisper model {mName} in {mDir}")
+                raise RuntimeError(f"Unable to load Whisper model {mName} in {mDir}")
 
         super().__init__(
             iFileSpec=iFileSpec,
@@ -937,32 +1033,26 @@ class WhisperPlugger(Plugger):
 
         if self.debug:
             if inputTranscript:
-                mmguero.eprint(f'Using input transcript (skipping speech recognition)')
+                mmguero.eprint('Using input transcript (skipping speech recognition)')
             else:
                 mmguero.eprint(f'Model directory: {mDir}')
                 mmguero.eprint(f'Model name: {mName}')
 
-    def __del__(self):
-        super().__del__()
-
     def RecognizeSpeech(self):
-        self.wordList.clear()
-
+        self.wordList = []
         self.transcript = self.model.transcribe(word_timestamps=True, audio=self.inputFileSpec)
-        if self.transcript and ('segments' in self.transcript):
+        if self.transcript and 'segments' in self.transcript:
             for segment in self.transcript['segments']:
-                if 'words' in segment:
-                    for word in segment['words']:
-                        word['word'] = word['word'].strip()
-                        word['scrub'] = scrubword(word['word']) in self.swearsMap
-                        self.wordList.append(word)
+                for word in segment.get('words', []):
+                    word['word'] = word['word'].strip()
+                    word['scrub'] = scrubword(word['word']) in self.swearsMap
+                    self.wordList.append(word)
 
         if self.debug:
             mmguero.eprint(json.dumps(self.wordList))
 
         if self.outputJson:
-            with open(self.outputJson, "w") as f:
-                f.write(json.dumps(self.wordList))
+            _write_json_atomic(self.outputJson, self.wordList)
 
         return self.wordList
 
@@ -1222,7 +1312,7 @@ def RunMonkeyPlug():
         dest="voskReadFramesChunk",
         metavar="<int>",
         type=int,
-        default=os.getenv("VOSK_READ_FRAMES", AUDIO_DEFAULT_WAV_FRAMES_CHUNK),
+        default=int(os.getenv("VOSK_READ_FRAMES", AUDIO_DEFAULT_WAV_FRAMES_CHUNK)),
         help=f"WAV frame chunk (default: {AUDIO_DEFAULT_WAV_FRAMES_CHUNK})",
     )
 
@@ -1252,22 +1342,17 @@ def RunMonkeyPlug():
         help=f"Number of threads used by torch for CPU inference ({DEFAULT_TORCH_THREADS})",
     )
 
-    try:
-        parser.error = parser.exit
-        args = parser.parse_args()
-    except SystemExit as se:
-        mmguero.eprint(se)
-        exit(2)
+    args = parser.parse_args()
 
     if args.debug:
-        mmguero.eprint(os.path.join(script_path, script_name))
+        mmguero.eprint(str(script_file))
         mmguero.eprint(f"Arguments: {sys.argv[1:]}")
         mmguero.eprint(f"Arguments: {args}")
     else:
         sys.tracebacklimit = 0
 
     if args.speechRecMode == SPEECH_REC_MODE_VOSK:
-        pathlib.Path(args.voskModelDir).mkdir(parents=True, exist_ok=True)
+        Path(args.voskModelDir).mkdir(parents=True, exist_ok=True)
         plug = VoskPlugger(
             args.input,
             args.output,
@@ -1295,9 +1380,8 @@ def RunMonkeyPlug():
             force=args.forceDespiteTag,
             dbug=args.debug,
         )
-
     elif args.speechRecMode == SPEECH_REC_MODE_WHISPER:
-        pathlib.Path(args.whisperModelDir).mkdir(parents=True, exist_ok=True)
+        Path(args.whisperModelDir).mkdir(parents=True, exist_ok=True)
         plug = WhisperPlugger(
             args.input,
             args.output,
@@ -1329,7 +1413,8 @@ def RunMonkeyPlug():
     else:
         raise ValueError(f"Unsupported speech recognition engine {args.speechRecMode}")
 
-    print(plug.EncodeCleanAudio())
+    with plug:
+        print(plug.EncodeCleanAudio())
 
     sys.exit(0)
 
